@@ -1,0 +1,53 @@
+.authCard {
+  width: min(100%, 460px);
+  padding: 36px;
+  border-radius: var(--radius-xl);
+  background: var(--gradient-card);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--border-default);
+  box-shadow: var(--shadow-xl);
+  position: relative;
+  z-index: 1;
+  animation: fadeInUp var(--duration-slow) var(--ease-out);
+}
+
+.header {
+  margin-bottom: 24px;
+}
+
+.header h1 {
+  font-size: 1.625rem;
+  background: linear-gradient(135deg, var(--maroon), var(--maroon-light));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.header p {
+  margin-top: 6px;
+  font-size: 0.9rem;
+  color: var(--gray-500);
+}
+
+.form {
+  display: grid;
+  gap: 16px;
+}
+
+.footer {
+  margin-top: 20px;
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+  text-align: center;
+}
+
+.footer a {
+  color: var(--maroon);
+  font-weight: 600;
+  transition: color var(--duration-fast) var(--ease-out);
+}
+
+.footer a:hover {
+  color: var(--maroon-light);
+}
