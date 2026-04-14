@@ -28,7 +28,7 @@ export default function StudentResultsPage({ params }) {
 
       const { data: electionData } = await supabase
         .from("elections")
-        .select("id, title, type, status")
+        .select("id, title, type, status, organization_id")
         .eq("id", electionId)
         .single();
 
@@ -36,6 +36,78 @@ export default function StudentResultsPage({ params }) {
         setError("Results are not yet available. Election is still ongoing.");
         setLoading(false);
         return;
+      }
+
+      if (electionData.organization_id) {
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
+
+        if (!user) {
+          setError("Please sign in to view election results.");
+          setLoading(false);
+          return;
+        }
+
+        const electionOrganizationId = String(electionData.organization_id);
+        const hasEligibleMembership = async (studentId) => {
+          if (!studentId) return false;
+
+          const { data: membership } = await supabase
+            .from("student_organizations")
+            .select("id")
+            .eq("student_id", studentId)
+            .eq("organization_id", electionOrganizationId)
+            .maybeSingle();
+
+          return Boolean(membership);
+        };
+
+        let isEligible = false;
+
+        const { data: accountStudent } = await supabase
+          .from("students")
+          .select("id, organization_id")
+          .eq("id", user.id)
+          .maybeSingle();
+
+        if (accountStudent?.id) {
+          if (String(accountStudent.organization_id || "") === electionOrganizationId) {
+            isEligible = true;
+          } else {
+            isEligible = await hasEligibleMembership(accountStudent.id);
+          }
+        }
+
+        if (!isEligible) {
+          const { data: profile } = await supabase
+            .from("profiles")
+            .select("student_id")
+            .eq("id", user.id)
+            .maybeSingle();
+
+          if (profile?.student_id) {
+            const { data: legacyStudent } = await supabase
+              .from("students")
+              .select("id, organization_id")
+              .eq("student_id", profile.student_id)
+              .maybeSingle();
+
+            if (legacyStudent?.id) {
+              if (String(legacyStudent.organization_id || "") === electionOrganizationId) {
+                isEligible = true;
+              } else {
+                isEligible = await hasEligibleMembership(legacyStudent.id);
+              }
+            }
+          }
+        }
+
+        if (!isEligible) {
+          setError("You are not eligible to view these election results.");
+          setLoading(false);
+          return;
+        }
       }
 
       setElection(electionData);

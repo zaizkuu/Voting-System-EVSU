@@ -46,6 +46,68 @@ export default function VotePage({ params }) {
         return;
       }
 
+      if (electionData.organization_id) {
+        const electionOrganizationId = String(electionData.organization_id);
+
+        const hasEligibleMembership = async (studentId) => {
+          if (!studentId) return false;
+
+          const { data: membership } = await supabase
+            .from("student_organizations")
+            .select("id")
+            .eq("student_id", studentId)
+            .eq("organization_id", electionOrganizationId)
+            .maybeSingle();
+
+          return Boolean(membership);
+        };
+
+        let isEligible = false;
+
+        const { data: accountStudent } = await supabase
+          .from("students")
+          .select("id, organization_id")
+          .eq("id", user.id)
+          .maybeSingle();
+
+        if (accountStudent?.id) {
+          if (String(accountStudent.organization_id || "") === electionOrganizationId) {
+            isEligible = true;
+          } else {
+            isEligible = await hasEligibleMembership(accountStudent.id);
+          }
+        }
+
+        if (!isEligible) {
+          const { data: profile } = await supabase
+            .from("profiles")
+            .select("student_id")
+            .eq("id", user.id)
+            .maybeSingle();
+
+          if (profile?.student_id) {
+            const { data: legacyStudent } = await supabase
+              .from("students")
+              .select("id, organization_id")
+              .eq("student_id", profile.student_id)
+              .maybeSingle();
+
+            if (legacyStudent?.id) {
+              if (String(legacyStudent.organization_id || "") === electionOrganizationId) {
+                isEligible = true;
+              } else {
+                isEligible = await hasEligibleMembership(legacyStudent.id);
+              }
+            }
+          }
+        }
+
+        if (!isEligible) {
+          setStatus({ loading: false, error: "This election is restricted to a specific organization.", message: "" });
+          return;
+        }
+      }
+
       const { count } = await supabase
         .from("votes")
         .select("id", { count: "exact", head: true })

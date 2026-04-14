@@ -1,79 +1,168 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
+import { useEffect, useState } from "react";
 import {
   Vote,
   CheckCircle2,
   Clock,
   AlertCircle,
-  ChevronRight,
   Sparkles,
 } from "lucide-react";
 import ElectionCard from "@/components/ElectionCard";
+import Modal from "@/components/Modal";
 import { createClient } from "@/lib/supabase/client";
 
 export default function StudentDashboardPage() {
   const [activeElections, setActiveElections] = useState([]);
   const [completedElections, setCompletedElections] = useState([]);
   const [userName, setUserName] = useState("");
+  const [organizations, setOrganizations] = useState([]);
+  const [studentRowId, setStudentRowId] = useState(null);
+  const [showSetupModal, setShowSetupModal] = useState(false);
+  const [setupSaving, setSetupSaving] = useState(false);
+  const [setupError, setSetupError] = useState("");
+  const [setupForm, setSetupForm] = useState({
+    department: "",
+    organization_id: "",
+  });
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    const loadData = async () => {
-      const supabase = createClient();
+  const loadData = async () => {
+    const supabase = createClient();
 
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user) {
-        setLoading(false);
-        return;
-      }
-
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("student_id, full_name")
-        .eq("id", user.id)
-        .single();
-
-      if (profile?.full_name) setUserName(profile.full_name);
-
-      let organizationIds = [];
-      if (profile?.student_id) {
-        const { data: student } = await supabase
-          .from("students")
-          .select("id")
-          .eq("student_id", profile.student_id)
-          .maybeSingle();
-
-        if (student?.id) {
-          const { data: orgMemberships } = await supabase
-            .from("student_organizations")
-            .select("organization_id")
-            .eq("student_id", student.id);
-
-          organizationIds = (orgMemberships || []).map((row) => row.organization_id);
-        }
-      }
-
-      const { data: elections } = await supabase
-        .from("elections")
-        .select("id, title, description, type, status, organization_id, start_date, end_date")
-        .order("created_at", { ascending: false });
-
-      const visibleElections = (elections || []).filter((election) => {
-        if (election.type !== "organization") return true;
-        return election.organization_id && organizationIds.includes(election.organization_id);
-      });
-
-      setActiveElections(visibleElections.filter((election) => election.status === "active"));
-      setCompletedElections(visibleElections.filter((election) => election.status === "completed"));
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) {
       setLoading(false);
-    };
+      return;
+    }
 
-    loadData();
+    const [{ data: profile }, { data: organizationRows }] = await Promise.all([
+      supabase.from("profiles").select("student_id, full_name").eq("id", user.id).single(),
+      supabase.from("organizations").select("id, name").order("name", { ascending: true }),
+    ]);
+
+    if (profile?.full_name) setUserName(profile.full_name);
+    setOrganizations(organizationRows || []);
+
+    let organizationIds = [];
+    let selectedOrganizationId = "";
+    let studentRecord = null;
+
+    if (profile?.student_id) {
+      const { data: student } = await supabase
+        .from("students")
+        .select("id, department, organization_id")
+        .eq("student_id", profile.student_id)
+        .maybeSingle();
+
+      studentRecord = student;
+
+      if (student?.id) {
+        const { data: orgMemberships } = await supabase
+          .from("student_organizations")
+          .select("organization_id")
+          .eq("student_id", student.id);
+
+        organizationIds = (orgMemberships || []).map((row) => row.organization_id);
+        if (!organizationIds.length && student.organization_id) {
+          organizationIds = [student.organization_id];
+        }
+
+        selectedOrganizationId = organizationIds[0] || "";
+      }
+    }
+
+    setStudentRowId(studentRecord?.id || null);
+    setSetupForm({
+      department: studentRecord?.department || "",
+      organization_id: selectedOrganizationId,
+    });
+
+    if (studentRecord?.id && (!String(studentRecord.department || "").trim() || !selectedOrganizationId)) {
+      setShowSetupModal(true);
+    }
+
+    const { data: elections } = await supabase
+      .from("elections")
+      .select("id, title, description, type, status, organization_id, start_date, end_date")
+      .order("created_at", { ascending: false });
+
+    const visibleElections = (elections || []).filter((election) => {
+      if (!election.organization_id) return true;
+      return organizationIds.includes(election.organization_id);
+    });
+
+    setActiveElections(visibleElections.filter((election) => election.status === "active"));
+    setCompletedElections(visibleElections.filter((election) => election.status === "completed"));
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void loadData();
   }, []);
+
+  const handleSaveSetup = async (event) => {
+    event.preventDefault();
+
+    if (!studentRowId) {
+      setSetupError("Student profile record not found. Contact admin.");
+      return;
+    }
+
+    const department = setupForm.department.trim();
+    const organizationId = setupForm.organization_id;
+
+    if (!department || !organizationId) {
+      setSetupError("Department and organization are required.");
+      return;
+    }
+
+    setSetupSaving(true);
+    setSetupError("");
+
+    const supabase = createClient();
+
+    const { error: studentUpdateError } = await supabase
+      .from("students")
+      .update({ department, organization_id: organizationId })
+      .eq("id", studentRowId);
+
+    if (studentUpdateError) {
+      setSetupError(`Unable to save profile: ${studentUpdateError.message}`);
+      setSetupSaving(false);
+      return;
+    }
+
+    const { error: clearMembershipError } = await supabase
+      .from("student_organizations")
+      .delete()
+      .eq("student_id", studentRowId);
+
+    if (clearMembershipError) {
+      setSetupError(`Unable to update organization: ${clearMembershipError.message}`);
+      setSetupSaving(false);
+      return;
+    }
+
+    const { error: insertMembershipError } = await supabase
+      .from("student_organizations")
+      .insert({ student_id: studentRowId, organization_id: organizationId });
+
+    if (insertMembershipError && insertMembershipError.code !== "23505") {
+      setSetupError(`Unable to update organization: ${insertMembershipError.message}`);
+      setSetupSaving(false);
+      return;
+    }
+
+    setShowSetupModal(false);
+    setSetupSaving(false);
+    setSetupError("");
+    setLoading(true);
+    await loadData();
+  };
 
   if (loading) {
     return (
@@ -235,6 +324,49 @@ export default function StudentDashboardPage() {
           </div>
         )}
       </section>
+
+      <Modal open={showSetupModal} onClose={() => setShowSetupModal(false)} title="Complete Your Student Profile">
+        <form className="form-grid" onSubmit={handleSaveSetup}>
+          <p style={{ color: "var(--gray-500)", marginTop: 0 }}>
+            Before voting, please confirm your current department and organization membership.
+          </p>
+
+          <div className="form-group">
+            <label className="form-label" htmlFor="setup-department">Department</label>
+            <input
+              id="setup-department"
+              className="form-input"
+              value={setupForm.department}
+              onChange={(event) => setSetupForm((previous) => ({ ...previous, department: event.target.value }))}
+              required
+            />
+          </div>
+
+          <div className="form-group">
+            <label className="form-label" htmlFor="setup-organization">Organization</label>
+            <select
+              id="setup-organization"
+              className="form-select"
+              value={setupForm.organization_id}
+              onChange={(event) => setSetupForm((previous) => ({ ...previous, organization_id: event.target.value }))}
+              required
+            >
+              <option value="">Select organization</option>
+              {organizations.map((organization) => (
+                <option key={organization.id} value={organization.id}>{organization.name}</option>
+              ))}
+            </select>
+          </div>
+
+          {setupError ? <p className="form-error">{setupError}</p> : null}
+
+          <div className="button-row">
+            <button type="submit" className="btn btn-primary" disabled={setupSaving}>
+              {setupSaving ? "Saving..." : "Save Information"}
+            </button>
+          </div>
+        </form>
+      </Modal>
     </section>
   );
 }

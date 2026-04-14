@@ -7,7 +7,6 @@ import { Upload, Download, FileSpreadsheet } from "lucide-react";
 const REQUIRED_COLUMNS = [
   "Student ID",
   "Full Name",
-  "Email",
   "Program",
   "Department",
   "Year Level",
@@ -43,7 +42,6 @@ export default function FileUpload({ onParsed }) {
       const normalized = rows.map((row) => ({
         student_id: String(row["Student ID"] || "").trim(),
         full_name: String(row["Full Name"] || "").trim(),
-        email: String(row["Email"] || "").trim().toLowerCase(),
         program: String(row["Program"] || "").trim(),
         department: String(row["Department"] || "").trim(),
         year_level: String(row["Year Level"] || "").trim(),
@@ -68,7 +66,6 @@ export default function FileUpload({ onParsed }) {
     const templateData = [{
       "Student ID": "e.g. 2021-12345",
       "Full Name": "e.g. Juan De La Cruz",
-      "Email": "e.g. juan.delacruz@evsu.edu.ph",
       "Program": "e.g. BSIT",
       "Department": "e.g. COT",
       "Year Level": "e.g. 3",
@@ -81,7 +78,6 @@ export default function FileUpload({ onParsed }) {
     worksheet["!cols"] = [
       { wch: 15 }, // Student ID
       { wch: 25 }, // Full Name
-      { wch: 30 }, // Email
       { wch: 15 }, // Program
       { wch: 15 }, // Department
       { wch: 12 }, // Year

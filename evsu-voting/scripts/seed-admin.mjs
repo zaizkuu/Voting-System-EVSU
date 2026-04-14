@@ -4,7 +4,7 @@
  * Run once with:  node scripts/seed-admin.mjs
  *
  * Credentials:
- *   Email:    admin@evsu.edu.ph
+ *   Email:    jonjon.albao!@evsu.edu.ph
  *   Password: admin12345
  */
 

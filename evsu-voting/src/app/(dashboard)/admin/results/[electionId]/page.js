@@ -24,6 +24,12 @@ export default function AdminResultsPage({ params }) {
   const [election, setElection] = useState(null);
   const [positionsData, setPositionsData] = useState([]);
 
+  const formatStatus = (value) => {
+    const text = String(value || "").trim();
+    if (!text) return "Unknown";
+    return text.charAt(0).toUpperCase() + text.slice(1);
+  };
+
   useEffect(() => {
     const loadResults = async () => {
       const supabase = createClient();
@@ -130,18 +136,18 @@ export default function AdminResultsPage({ params }) {
 
     generateReport({
       electionTitle: election.title,
+      electionType: election.type,
+      electionStatus: election.status,
+      reportMode: election.status === "completed" ? "Official Final Report" : "Live Snapshot Report",
       generatedAt: new Date().toLocaleString(),
       summaryRows: [
         ["Election Type", election.type.toUpperCase()],
         ["Status", election.status.toUpperCase()],
+        ["Report Mode", election.status === "completed" ? "FINAL" : "LIVE SNAPSHOT"],
         ["Total Votes Cast", totalVotes.toString()],
-        ["Total Positions", positionsData.length.toString()],
+        ["Total Sections", positionsData.length.toString()],
       ],
-      positionsData: positionsData.map((pos) => ({
-        title: pos.title,
-        winner: pos.winner,
-        rows: pos.options.map((opt) => [opt.label, opt.count]),
-      })),
+      positionsData,
     });
   };
 
@@ -178,7 +184,13 @@ export default function AdminResultsPage({ params }) {
       <div className="page-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
         <div>
           <h1>{election.title}</h1>
-          <p>Official election analytics and real-time dashboard tracking.</p>
+          <p>
+            Real-time election analytics and downloadable report export.
+            {election.status !== "completed" ? " PDF is generated as a live snapshot." : " PDF is marked as final."}
+          </p>
+          <p className="badge" style={{ width: "fit-content", marginTop: 8 }}>
+            Status: {formatStatus(election.status)}
+          </p>
         </div>
         <button type="button" className="btn btn-gold" onClick={downloadPDF} style={{ whiteSpace: "nowrap" }}>
           <FileDown size={16} />

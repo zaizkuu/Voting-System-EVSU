@@ -1,24 +1,46 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import DataTable from "@/components/DataTable";
+import Modal from "@/components/Modal";
 import { 
   Users, User, Trophy, AlertCircle, Plus, Upload, 
   Trash2, X, CheckCircle2, Image as ImageIcon 
 } from "lucide-react";
 
+const ATTENDANCE_COLUMNS = [
+  { key: "student_id", label: "Student ID" },
+  { key: "full_name", label: "Student Name" },
+  { key: "department", label: "Department" },
+  { key: "year_level", label: "Year Level" },
+  { key: "account_status", label: "Account" },
+  { key: "vote_status", label: "Vote Status" },
+];
+
 export default function ManageElectionPage({ params }) {
   // Unwrap promise for Next.js 15 dynamic APIs
   const { electionId } = React.use(params);
+  const router = useRouter();
 
   const [election, setElection] = useState(null);
   const [positions, setPositions] = useState([]);
   const [candidates, setCandidates] = useState([]);
   const [policyOptions, setPolicyOptions] = useState([]);
+  const [attendanceRows, setAttendanceRows] = useState([]);
+  const [attendanceSummary, setAttendanceSummary] = useState({
+    eligible: 0,
+    voted: 0,
+    pending: 0,
+  });
   
   const [status, setStatus] = useState({ type: "", message: "" });
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState("");
+  const [isDeletingElection, setIsDeletingElection] = useState(false);
 
   // Forms
   const [positionForm, setPositionForm] = useState({ title: "", max_votes: 1 });
@@ -53,6 +75,102 @@ export default function ManageElectionPage({ params }) {
     setPositions(positionData || []);
     setCandidates(candidateData || []);
     setPolicyOptions(policyData || []);
+
+    if (electionData) {
+      let eligibleStudents = [];
+
+      if (electionData.organization_id) {
+        const eligibleStudentMap = new Map();
+
+        const { data: directOrganizationStudents } = await supabase
+          .from("students")
+          .select("id, student_id, full_name, department, year_level")
+          .eq("organization_id", electionData.organization_id);
+
+        (directOrganizationStudents || []).forEach((student) => {
+          eligibleStudentMap.set(student.id, student);
+        });
+
+        const { data: membershipRows } = await supabase
+          .from("student_organizations")
+          .select("student_id")
+          .eq("organization_id", electionData.organization_id);
+
+        const eligibleStudentIds = [...new Set((membershipRows || []).map((item) => item.student_id))];
+
+        if (eligibleStudentIds.length) {
+          const { data: scopedStudents } = await supabase
+            .from("students")
+            .select("id, student_id, full_name, department, year_level")
+            .in("id", eligibleStudentIds)
+            .order("full_name", { ascending: true });
+
+          (scopedStudents || []).forEach((student) => {
+            eligibleStudentMap.set(student.id, student);
+          });
+        }
+
+        eligibleStudents = [...eligibleStudentMap.values()].sort((a, b) =>
+          String(a.full_name || "").localeCompare(String(b.full_name || ""))
+        );
+      } else {
+        const { data: allStudents } = await supabase
+          .from("students")
+          .select("id, student_id, full_name, department, year_level")
+          .order("full_name", { ascending: true });
+
+        eligibleStudents = allStudents || [];
+      }
+
+      let profileRows = [];
+      const eligibleStudentCodes = eligibleStudents.map((student) => student.student_id).filter(Boolean);
+
+      if (eligibleStudentCodes.length) {
+        const { data: studentProfiles } = await supabase
+          .from("profiles")
+          .select("id, student_id, full_name")
+          .eq("role", "student")
+          .in("student_id", eligibleStudentCodes);
+
+        profileRows = studentProfiles || [];
+      }
+
+      const { data: voteRows } = await supabase
+        .from("votes")
+        .select("voter_id")
+        .eq("election_id", electionId);
+
+      const profileByStudentId = new Map(profileRows.map((profile) => [profile.student_id, profile]));
+      const votedProfileIds = new Set((voteRows || []).map((vote) => vote.voter_id));
+
+      const attendance = eligibleStudents.map((student) => {
+        const profile = profileByStudentId.get(student.student_id);
+        const hasVoted = profile ? votedProfileIds.has(profile.id) : false;
+
+        return {
+          id: student.id,
+          student_id: student.student_id,
+          full_name: profile?.full_name || student.full_name,
+          department: student.department || "-",
+          year_level: student.year_level || "-",
+          account_status: profile ? "Registered" : "No Account",
+          vote_status: hasVoted ? "Voted" : "Not Yet",
+        };
+      });
+
+      const votedCount = attendance.filter((item) => item.vote_status === "Voted").length;
+
+      setAttendanceRows(attendance);
+      setAttendanceSummary({
+        eligible: attendance.length,
+        voted: votedCount,
+        pending: Math.max(0, attendance.length - votedCount),
+      });
+    } else {
+      setAttendanceRows([]);
+      setAttendanceSummary({ eligible: 0, voted: 0, pending: 0 });
+    }
+
     setIsLoading(false);
   };
 
@@ -213,6 +331,41 @@ export default function ManageElectionPage({ params }) {
     await loadData();
   };
 
+  const closeDeleteModal = () => {
+    if (isDeletingElection) return;
+    setDeleteModalOpen(false);
+    setDeleteConfirmText("");
+  };
+
+  const deleteElection = async (event) => {
+    event.preventDefault();
+
+    if (deleteConfirmText.trim() !== "Confirm") {
+      showMessage("error", 'Type "Confirm" exactly to proceed with deletion.');
+      return;
+    }
+
+    setIsDeletingElection(true);
+    const supabase = createClient();
+
+    const { error } = await supabase
+      .from("elections")
+      .delete()
+      .eq("id", electionId);
+
+    if (error) {
+      showMessage("error", `Unable to delete election: ${error.message}`);
+      setIsDeletingElection(false);
+      return;
+    }
+
+    setIsDeletingElection(false);
+    setDeleteModalOpen(false);
+    setDeleteConfirmText("");
+    router.push("/admin/elections");
+    router.refresh();
+  };
+
   if (isLoading) return (
     <div className="page-stack" style={{ alignItems: "center", justifyContent: "center", minHeight: "50vh" }}>
       <p style={{ color: "var(--gray-500)", fontWeight: 500 }}>Loading election layout...</p>
@@ -241,6 +394,22 @@ export default function ManageElectionPage({ params }) {
             {election.title}
           </h1>
           <p style={{ color: "var(--gray-500)", fontSize: "0.9rem" }}>Manage the ballot configuration for this election.</p>
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 }}>
+          <button
+            type="button"
+            className="btn btn-outline"
+            onClick={() => setDeleteModalOpen(true)}
+            disabled={isDeletingElection}
+            style={{ borderColor: "var(--error)", color: "var(--error)", fontWeight: 700 }}
+          >
+            <Trash2 size={16} />
+            Delete Election
+          </button>
+          <p style={{ margin: 0, fontSize: "0.75rem", color: "var(--gray-500)", textAlign: "right" }}>
+            Permanently removes this election and all related records.
+          </p>
         </div>
       </div>
 
@@ -492,6 +661,71 @@ export default function ManageElectionPage({ params }) {
 
         </div>
       )}
+
+      <section className="glass-card" style={{ padding: 24 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
+          <div>
+            <h3 style={{ margin: 0, fontSize: "1.1rem", fontWeight: 700 }}>Voter Attendance</h3>
+            <p style={{ margin: "6px 0 0", color: "var(--gray-500)", fontSize: "0.85rem" }}>
+              {election.organization_id
+                ? "Scope: Specific organization members only"
+                : "Scope: Everyone can vote"}
+            </p>
+          </div>
+
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <span className="badge">Eligible: {attendanceSummary.eligible}</span>
+            <span className="badge">Voted: {attendanceSummary.voted}</span>
+            <span className="badge">Not Yet: {attendanceSummary.pending}</span>
+          </div>
+        </div>
+
+        {attendanceRows.length ? (
+          <DataTable columns={ATTENDANCE_COLUMNS} rows={attendanceRows} />
+        ) : (
+          <p style={{ color: "var(--gray-500)", margin: 0 }}>No eligible voters found for this election yet.</p>
+        )}
+      </section>
+
+      <Modal open={deleteModalOpen} onClose={closeDeleteModal} title="Delete Election">
+        <form className="form-grid" onSubmit={deleteElection}>
+          <p style={{ marginTop: 0, color: "var(--gray-600)" }}>
+            Are you sure you want to delete this election? Type &quot;Confirm&quot; to proceed.
+          </p>
+
+          <div className="form-group">
+            <label className="form-label" htmlFor="delete-confirm-input">Confirmation</label>
+            <input
+              id="delete-confirm-input"
+              className="form-input"
+              placeholder='Type "Confirm"'
+              value={deleteConfirmText}
+              onChange={(event) => setDeleteConfirmText(event.target.value)}
+              disabled={isDeletingElection}
+              required
+            />
+          </div>
+
+          <div className="button-row">
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={closeDeleteModal}
+              disabled={isDeletingElection}
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="btn btn-outline"
+              disabled={isDeletingElection}
+              style={{ borderColor: "var(--error)", color: "var(--error)", fontWeight: 700 }}
+            >
+              {isDeletingElection ? "Deleting..." : "Delete Election"}
+            </button>
+          </div>
+        </form>
+      </Modal>
     </section>
   );
 }

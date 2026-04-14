@@ -455,6 +455,61 @@
     outline: none;
   }
 
+  .password-input-wrap {
+    position: relative;
+    display: flex;
+    align-items: center;
+  }
+
+  .form-input.with-trailing-icon {
+    padding-right: 44px;
+  }
+
+  .password-toggle-btn {
+    position: absolute;
+    right: 10px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border: none;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--gray-500);
+    cursor: pointer;
+    transition: color var(--duration-fast) var(--ease-out),
+                background var(--duration-fast) var(--ease-out);
+  }
+
+  .password-toggle-btn:hover {
+    color: var(--gray-700);
+    background: var(--gray-100);
+  }
+
+  .password-toggle-btn:focus-visible {
+    outline: 2px solid var(--maroon);
+    outline-offset: 1px;
+  }
+
+  .form-helper-row {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    margin-top: -4px;
+  }
+
+  .form-helper-link {
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: var(--maroon);
+    transition: color var(--duration-fast) var(--ease-out);
+  }
+
+  .form-helper-link:hover {
+    color: var(--maroon-light);
+  }
+
   .form-input::placeholder {
     color: var(--text-muted);
   }

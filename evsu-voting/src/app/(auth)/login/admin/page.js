@@ -1,9 +1,10 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { Shield } from "lucide-react";
+import { Eye, EyeOff, Shield } from "lucide-react";
 
 export default function AdminLoginPage() {
   const router = useRouter();
@@ -11,6 +12,7 @@ export default function AdminLoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   const handleSubmit = async (event) => {
     event.preventDefault();
@@ -111,17 +113,32 @@ export default function AdminLoginPage() {
 
           <div className="form-group">
             <label className="form-label" htmlFor="admin-password">Password</label>
-            <input
-              id="admin-password"
-              className="form-input"
-              type="password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              required
-            />
+            <div className="password-input-wrap">
+              <input
+                id="admin-password"
+                className="form-input with-trailing-icon"
+                type={showPassword ? "text" : "password"}
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                required
+              />
+              <button
+                type="button"
+                className="password-toggle-btn"
+                onClick={() => setShowPassword((previous) => !previous)}
+                aria-label={showPassword ? "Hide password" : "Show password"}
+                aria-pressed={showPassword}
+              >
+                {showPassword ? <EyeOff size={18} aria-hidden="true" /> : <Eye size={18} aria-hidden="true" />}
+              </button>
+            </div>
           </div>
 
           {error ? <p className="form-error">{error}</p> : null}
+
+          <p className="form-helper-row" style={{ justifyContent: "flex-end" }}>
+            <Link href="/forgot-password" className="form-helper-link">Forgot password?</Link>
+          </p>
 
           <button className="btn btn-primary" type="submit" disabled={loading}>
             {loading ? "Signing in..." : "Sign in as Admin"}

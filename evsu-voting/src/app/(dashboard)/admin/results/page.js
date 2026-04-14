@@ -13,8 +13,7 @@ export default function AdminResultsListPage() {
       const { data } = await supabase
         .from("elections")
         .select("id, title, type, status")
-        .eq("status", "completed")
-        .order("end_date", { ascending: false });
+        .order("created_at", { ascending: false });
 
       setElections(data || []);
     };
@@ -26,7 +25,7 @@ export default function AdminResultsListPage() {
     <section className="page-stack">
       <div className="page-header">
         <h1>Election Results</h1>
-        <p>Select a completed election to view charts and export PDF reports.</p>
+        <p>Open any election to view real-time analytics and download a PDF report.</p>
       </div>
 
       <div className="grid-cards">
@@ -34,6 +33,7 @@ export default function AdminResultsListPage() {
           <article className="glass-card" key={election.id}>
             <h3>{election.title}</h3>
             <p>Type: {election.type}</p>
+            <p>Status: {election.status}</p>
             <Link className="btn btn-primary btn-sm" href={`/admin/results/${election.id}`}>
               Open Results
             </Link>

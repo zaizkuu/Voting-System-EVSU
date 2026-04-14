@@ -1,36 +1,76 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# EVSU Voting System
 
-## Getting Started
+Web-based voting platform built with Next.js and Supabase.
 
-First, run the development server:
+## Run Locally
+
+1. Install dependencies:
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+pnpm install
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+2. Create your environment file:
 
-You can start editing the page by modifying `app/page.js`. The page auto-updates as you edit the file.
+```bash
+cp .env.example .env.local
+# PowerShell
+Copy-Item .env.example .env.local
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+3. Fill in all required variables in `.env.local`.
 
-## Learn More
+4. Start development server:
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+pnpm dev
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Environment Variables
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Required values are listed in `.env.example`.
 
-## Deploy on Vercel
+- `NEXT_PUBLIC_SUPABASE_URL`
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `RESET_OTP_SECRET` (optional, recommended for signing reset OTP cookies)
+- `NEXT_PUBLIC_APP_URL` (set this to your deployed HTTPS domain, not localhost, for production)
+- `SMTP_HOST`
+- `SMTP_PORT`
+- `SMTP_SECURE`
+- `SMTP_USER` (must be a real sender email address, e.g. `votingevsu@gmail.com`)
+- `SMTP_APP_PASSWORD`
+- `SMTP_FROM` (can be `EVSU VOTING <votingevsu@gmail.com>`)
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Registration Confirmation Email Flow
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+1. User creates account on `/register`.
+2. Supabase sends its verification email.
+3. API route `POST /api/auth/register-confirmation` sends a separate registration confirmation/welcome email via SMTP.
+
+## Deployment Notes (No Localhost Links)
+
+1. Set `NEXT_PUBLIC_APP_URL` to your deployed domain (example: `https://evsu-voting.vercel.app`).
+2. Add the same value in your hosting environment variables (Production and Preview).
+3. In Supabase Auth URL settings, add your deployed domain to allowed redirect URLs.
+4. Keep localhost URLs only for local development, not production env values.
+
+## Password Reset Flow
+
+1. User submits email on `/forgot-password`.
+2. API route `POST /api/auth/forgot-password` generates a Supabase recovery link.
+3. API sends the link via SMTP (Nodemailer).
+4. User lands on `/auth/confirm`, then gets redirected to `/reset-password`.
+5. System sends a 6-digit OTP to the recovery-session email.
+6. User verifies OTP on `/reset-password`.
+7. Only after OTP verification can user set a new password.
+
+## Validation Notes
+
+The email API routes validate:
+
+- email format
+- required Supabase server keys
+- required SMTP credentials
+- valid `SMTP_PORT` and `SMTP_SECURE` values
+- production-safe app origin resolution (rejects localhost-only origin in production)

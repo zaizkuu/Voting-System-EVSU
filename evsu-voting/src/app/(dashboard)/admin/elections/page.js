@@ -9,6 +9,7 @@ const INITIAL_FORM = {
   description: "",
   type: "government",
   status: "draft",
+  voter_scope: "everyone",
   start_date: "",
   end_date: "",
   organization_id: "",
@@ -58,7 +59,7 @@ export default function AdminElectionsPage() {
       status: form.status,
       start_date: form.start_date || null,
       end_date: form.end_date || null,
-      organization_id: form.type === "organization" ? form.organization_id || null : null,
+      organization_id: form.voter_scope === "organization" ? form.organization_id || null : null,
       created_by: user.id,
     };
 
@@ -94,7 +95,18 @@ export default function AdminElectionsPage() {
 
         <div className="form-group">
           <label className="form-label" htmlFor="type">Type</label>
-          <select id="type" className="form-select" value={form.type} onChange={(event) => setForm((previous) => ({ ...previous, type: event.target.value }))}>
+          <select
+            id="type"
+            className="form-select"
+            value={form.type}
+            onChange={(event) => setForm((previous) => {
+              const nextType = event.target.value;
+              if (nextType === "organization" && previous.voter_scope === "everyone") {
+                return { ...previous, type: nextType, voter_scope: "organization" };
+              }
+              return { ...previous, type: nextType };
+            })}
+          >
             <option value="government">Government</option>
             <option value="policy">Policy</option>
             <option value="organization">Organization</option>
@@ -110,9 +122,22 @@ export default function AdminElectionsPage() {
           </select>
         </div>
 
-        {form.type === "organization" ? (
+        <div className="form-group">
+          <label className="form-label" htmlFor="voter-scope">Who Can Vote</label>
+          <select
+            id="voter-scope"
+            className="form-select"
+            value={form.voter_scope}
+            onChange={(event) => setForm((previous) => ({ ...previous, voter_scope: event.target.value }))}
+          >
+            <option value="everyone">Everyone</option>
+            <option value="organization">Specific Organization</option>
+          </select>
+        </div>
+
+        {form.voter_scope === "organization" ? (
           <div className="form-group">
-            <label className="form-label" htmlFor="org">Organization</label>
+            <label className="form-label" htmlFor="org">Eligible Organization</label>
             <select id="org" className="form-select" value={form.organization_id} onChange={(event) => setForm((previous) => ({ ...previous, organization_id: event.target.value }))} required>
               <option value="">Select organization</option>
               {organizations.map((organization) => (
