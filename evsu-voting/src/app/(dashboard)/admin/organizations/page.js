@@ -13,6 +13,9 @@ const COLUMNS = [
   { key: "actions", label: "Actions" },
 ];
 
+const MEMBERSHIP_PAGE_SIZE = 200;
+const STUDENT_LOOKUP_CHUNK_SIZE = 50;
+
 const parseStudentIds = (value) => (
   [...new Set(
     String(value || "")
@@ -27,6 +30,78 @@ const formatDate = (value) => {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return String(value);
   return parsed.toLocaleDateString();
+};
+
+const chunkArray = (values, chunkSize) => {
+  const chunks = [];
+
+  for (let index = 0; index < values.length; index += chunkSize) {
+    chunks.push(values.slice(index, index + chunkSize));
+  }
+
+  return chunks;
+};
+
+const fetchAllMembershipRows = async (supabase, organizationId = null) => {
+  const rows = [];
+  let from = 0;
+
+  while (true) {
+    let query = supabase
+      .from("student_organizations")
+      .select("id, student_id, organization_id")
+      .order("id", { ascending: true })
+      .range(from, from + MEMBERSHIP_PAGE_SIZE - 1);
+
+    if (organizationId) {
+      query = query.eq("organization_id", organizationId);
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      return { data: null, error };
+    }
+
+    const batch = data || [];
+    if (!batch.length) {
+      break;
+    }
+
+    rows.push(...batch);
+    from += batch.length;
+  }
+
+  return { data: rows, error: null };
+};
+
+const fetchStudentsByColumnValues = async (supabase, columnName, values) => {
+  const normalizedValues = [...new Set(
+    values
+      .map((value) => String(value || "").trim())
+      .filter(Boolean),
+  )];
+
+  if (!normalizedValues.length) {
+    return { data: [], error: null };
+  }
+
+  const rows = [];
+
+  for (const valueChunk of chunkArray(normalizedValues, STUDENT_LOOKUP_CHUNK_SIZE)) {
+    const { data, error } = await supabase
+      .from("students")
+      .select("id, student_id")
+      .in(columnName, valueChunk);
+
+    if (error) {
+      return { data: null, error };
+    }
+
+    rows.push(...(data || []));
+  }
+
+  return { data: rows, error: null };
 };
 
 export default function OrganizationsPage() {
@@ -51,7 +126,7 @@ export default function OrganizationsPage() {
     const supabase = createClient();
     const [{ data: organizations, error: organizationsError }, { data: memberships, error: membershipsError }] = await Promise.all([
       supabase.from("organizations").select("id, name, description, created_at").order("name", { ascending: true }),
-      supabase.from("student_organizations").select("organization_id"),
+      fetchAllMembershipRows(supabase),
     ]);
 
     if (organizationsError) {
@@ -120,10 +195,7 @@ export default function OrganizationsPage() {
     setStatus("");
 
     const supabase = createClient();
-    const { data: memberships, error: membershipsError } = await supabase
-      .from("student_organizations")
-      .select("student_id")
-      .eq("organization_id", organization.id);
+    const { data: memberships, error: membershipsError } = await fetchAllMembershipRows(supabase, organization.id);
 
     if (membershipsError) {
       setEditError(`Unable to load organization members: ${membershipsError.message}`);
@@ -136,20 +208,22 @@ export default function OrganizationsPage() {
       return;
     }
 
-    const { data: students, error: studentsError } = await supabase
-      .from("students")
-      .select("id, student_id")
-      .in("id", studentRowIds)
-      .order("student_id", { ascending: true });
+    const { data: students, error: studentsError } = await fetchStudentsByColumnValues(supabase, "id", studentRowIds);
 
     if (studentsError) {
       setEditError(`Unable to load student IDs: ${studentsError.message}`);
       return;
     }
 
+    const sortedStudentIds = [...new Set(
+      (students || [])
+        .map((student) => String(student.student_id || "").trim())
+        .filter(Boolean),
+    )].sort((left, right) => left.localeCompare(right));
+
     setEditForm((previous) => ({
       ...previous,
-      studentIdsText: (students || []).map((student) => student.student_id).filter(Boolean).join("\n"),
+      studentIdsText: sortedStudentIds.join("\n"),
     }));
   };
 
@@ -198,10 +272,11 @@ export default function OrganizationsPage() {
     let missingStudentIds = [];
 
     if (desiredStudentIds.length) {
-      const { data: students, error: studentsError } = await supabase
-        .from("students")
-        .select("id, student_id")
-        .in("student_id", desiredStudentIds);
+      const { data: students, error: studentsError } = await fetchStudentsByColumnValues(
+        supabase,
+        "student_id",
+        desiredStudentIds,
+      );
 
       if (studentsError) {
         setEditError(`Unable to validate student IDs: ${studentsError.message}`);
@@ -214,10 +289,10 @@ export default function OrganizationsPage() {
       missingStudentIds = desiredStudentIds.filter((studentId) => !foundIds.has(studentId));
     }
 
-    const { data: currentMemberships, error: currentMembershipsError } = await supabase
-      .from("student_organizations")
-      .select("student_id")
-      .eq("organization_id", editingOrganization.id);
+    const { data: currentMemberships, error: currentMembershipsError } = await fetchAllMembershipRows(
+      supabase,
+      editingOrganization.id,
+    );
 
     if (currentMembershipsError) {
       setEditError(`Unable to load current memberships: ${currentMembershipsError.message}`);
@@ -240,16 +315,18 @@ export default function OrganizationsPage() {
       .filter((studentId) => !desiredStudentRowIds.has(studentId));
 
     if (membershipsToRemove.length) {
-      const { error: removeError } = await supabase
-        .from("student_organizations")
-        .delete()
-        .eq("organization_id", editingOrganization.id)
-        .in("student_id", membershipsToRemove);
+      for (const studentChunk of chunkArray(membershipsToRemove, STUDENT_LOOKUP_CHUNK_SIZE)) {
+        const { error: removeError } = await supabase
+          .from("student_organizations")
+          .delete()
+          .eq("organization_id", editingOrganization.id)
+          .in("student_id", studentChunk);
 
-      if (removeError) {
-        setEditError(`Unable to remove existing memberships: ${removeError.message}`);
-        setSavingEdit(false);
-        return;
+        if (removeError) {
+          setEditError(`Unable to remove existing memberships: ${removeError.message}`);
+          setSavingEdit(false);
+          return;
+        }
       }
     }
 

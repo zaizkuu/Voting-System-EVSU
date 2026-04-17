@@ -55,6 +55,20 @@ Required values are listed in `.env.example`.
 3. In Supabase Auth URL settings, add your deployed domain to allowed redirect URLs.
 4. Keep localhost URLs only for local development, not production env values.
 
+## Automatic Deployment (Always Deploy)
+
+This repository now includes [`.github/workflows/deploy-vercel.yml`](.github/workflows/deploy-vercel.yml).
+
+- Every push triggers deployment.
+- `main` or `master` deploys to Vercel Production.
+- Any other branch deploys to Vercel Preview.
+
+Set these GitHub repository secrets before using the workflow:
+
+- `VERCEL_TOKEN`
+- `VERCEL_ORG_ID`
+- `VERCEL_PROJECT_ID`
+
 ## Password Reset Flow
 
 1. User submits email on `/forgot-password`.
