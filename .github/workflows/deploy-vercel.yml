@@ -53,12 +53,8 @@ jobs:
         run: |
           if [[ "${GITHUB_REF_NAME}" == "main" || "${GITHUB_REF_NAME}" == "master" ]]; then
             echo "Deploying production build for ${GITHUB_REF_NAME}"
-            vercel pull --yes --environment=production --token="$VERCEL_TOKEN"
-            vercel build --prod --token="$VERCEL_TOKEN"
-            vercel deploy --prebuilt --prod --token="$VERCEL_TOKEN"
+            vercel --prod --yes --token="$VERCEL_TOKEN"
           else
             echo "Deploying preview build for ${GITHUB_REF_NAME}"
-            vercel pull --yes --environment=preview --token="$VERCEL_TOKEN"
-            vercel build --token="$VERCEL_TOKEN"
-            vercel deploy --prebuilt --token="$VERCEL_TOKEN"
+            vercel --yes --token="$VERCEL_TOKEN"
           fi
