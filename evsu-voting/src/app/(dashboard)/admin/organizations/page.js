@@ -15,6 +15,7 @@ const COLUMNS = [
 
 const MEMBERSHIP_PAGE_SIZE = 200;
 const STUDENT_LOOKUP_CHUNK_SIZE = 50;
+const UUID_LIKE_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const parseStudentIds = (value) => (
   [...new Set(
@@ -102,6 +103,48 @@ const fetchStudentsByColumnValues = async (supabase, columnName, values) => {
   }
 
   return { data: rows, error: null };
+};
+
+const fetchStudentsByIdentifiers = async (supabase, identifiers) => {
+  const normalizedIdentifiers = [...new Set(
+    identifiers
+      .map((value) => String(value || "").trim())
+      .filter(Boolean),
+  )];
+
+  if (!normalizedIdentifiers.length) {
+    return { data: [], error: null };
+  }
+
+  const uuidIdentifiers = normalizedIdentifiers.filter((identifier) => UUID_LIKE_PATTERN.test(identifier));
+
+  const idLookupPromise = uuidIdentifiers.length
+    ? fetchStudentsByColumnValues(supabase, "id", uuidIdentifiers)
+    : Promise.resolve({ data: [], error: null });
+
+  const studentIdLookupPromise = fetchStudentsByColumnValues(supabase, "student_id", normalizedIdentifiers);
+
+  const [{ data: studentsByRowId, error: studentsByRowIdError }, { data: studentsByStudentId, error: studentsByStudentIdError }] = await Promise.all([
+    idLookupPromise,
+    studentIdLookupPromise,
+  ]);
+
+  if (studentsByRowIdError) {
+    return { data: null, error: studentsByRowIdError };
+  }
+
+  if (studentsByStudentIdError) {
+    return { data: null, error: studentsByStudentIdError };
+  }
+
+  const mergedStudentsById = new Map();
+  [...(studentsByRowId || []), ...(studentsByStudentId || [])].forEach((student) => {
+    const rowId = String(student?.id || "").trim();
+    if (!rowId) return;
+    mergedStudentsById.set(rowId, student);
+  });
+
+  return { data: [...mergedStudentsById.values()], error: null };
 };
 
 export default function OrganizationsPage() {
@@ -202,24 +245,46 @@ export default function OrganizationsPage() {
       return;
     }
 
-    const studentRowIds = (memberships || []).map((row) => row.student_id).filter(Boolean);
+    const membershipStudentRefs = (memberships || []).map((row) => row.student_id).filter(Boolean);
 
-    if (!studentRowIds.length) {
+    if (!membershipStudentRefs.length) {
       return;
     }
 
-    const { data: students, error: studentsError } = await fetchStudentsByColumnValues(supabase, "id", studentRowIds);
+    const { data: students, error: studentsError } = await fetchStudentsByIdentifiers(supabase, membershipStudentRefs);
 
     if (studentsError) {
       setEditError(`Unable to load student IDs: ${studentsError.message}`);
       return;
     }
 
+    const studentsByRowId = new Map();
+    const studentsByStudentId = new Map();
+    (students || []).forEach((student) => {
+      const rowId = String(student.id || "").trim();
+      const studentId = String(student.student_id || "").trim();
+      if (rowId) {
+        studentsByRowId.set(rowId, student);
+      }
+      if (studentId) {
+        studentsByStudentId.set(studentId, student);
+      }
+    });
+
     const sortedStudentIds = [...new Set(
-      (students || [])
-        .map((student) => String(student.student_id || "").trim())
+      membershipStudentRefs
+        .map((studentRef) => String(studentRef || "").trim())
+        .map((studentRef) => {
+          const matchedStudent = studentsByRowId.get(studentRef) || studentsByStudentId.get(studentRef);
+          return String(matchedStudent?.student_id || "").trim();
+        })
         .filter(Boolean),
     )].sort((left, right) => left.localeCompare(right));
+
+    if (!sortedStudentIds.length) {
+      setEditError("Membership rows were found, but no matching Student IDs could be resolved. Please sync memberships and try again.");
+      return;
+    }
 
     setEditForm((previous) => ({
       ...previous,
@@ -301,7 +366,48 @@ export default function OrganizationsPage() {
     }
 
     const desiredStudentRowIds = new Set(desiredStudentRows.map((student) => student.id));
-    const currentStudentRowIds = new Set((currentMemberships || []).map((membership) => membership.student_id));
+    const currentMembershipStudentRefs = (currentMemberships || []).map((membership) => String(membership.student_id || "").trim()).filter(Boolean);
+    const { data: currentMembershipStudents, error: currentMembershipStudentsError } = await fetchStudentsByIdentifiers(
+      supabase,
+      currentMembershipStudentRefs,
+    );
+
+    if (currentMembershipStudentsError) {
+      setEditError(`Unable to resolve current memberships: ${currentMembershipStudentsError.message}`);
+      setSavingEdit(false);
+      return;
+    }
+
+    const resolvedStudentIdByMembershipRef = new Map();
+    const studentsByCurrentRowId = new Map();
+    const studentsByCurrentStudentId = new Map();
+
+    (currentMembershipStudents || []).forEach((student) => {
+      const rowId = String(student.id || "").trim();
+      const studentId = String(student.student_id || "").trim();
+
+      if (rowId) {
+        studentsByCurrentRowId.set(rowId, student);
+      }
+
+      if (studentId) {
+        studentsByCurrentStudentId.set(studentId, student);
+      }
+    });
+
+    currentMembershipStudentRefs.forEach((membershipRef) => {
+      const matchedStudent = studentsByCurrentRowId.get(membershipRef) || studentsByCurrentStudentId.get(membershipRef);
+      if (matchedStudent?.id) {
+        resolvedStudentIdByMembershipRef.set(membershipRef, matchedStudent.id);
+        return;
+      }
+
+      if (UUID_LIKE_PATTERN.test(membershipRef)) {
+        resolvedStudentIdByMembershipRef.set(membershipRef, membershipRef);
+      }
+    });
+
+    const currentStudentRowIds = new Set([...resolvedStudentIdByMembershipRef.values()].filter(Boolean));
 
     const membershipsToInsert = desiredStudentRows
       .filter((student) => !currentStudentRowIds.has(student.id))
@@ -311,8 +417,16 @@ export default function OrganizationsPage() {
       }));
 
     const membershipsToRemove = (currentMemberships || [])
-      .map((membership) => membership.student_id)
-      .filter((studentId) => !desiredStudentRowIds.has(studentId));
+      .map((membership) => String(membership.student_id || "").trim())
+      .filter(Boolean)
+      .filter((membershipRef) => {
+        const resolvedStudentId = resolvedStudentIdByMembershipRef.get(membershipRef);
+        if (!resolvedStudentId) {
+          return true;
+        }
+
+        return !desiredStudentRowIds.has(resolvedStudentId);
+      });
 
     if (membershipsToRemove.length) {
       for (const studentChunk of chunkArray(membershipsToRemove, STUDENT_LOOKUP_CHUNK_SIZE)) {

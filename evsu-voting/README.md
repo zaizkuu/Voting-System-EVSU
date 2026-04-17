@@ -57,7 +57,7 @@ Required values are listed in `.env.example`.
 
 ## Automatic Deployment (Always Deploy)
 
-This repository now includes [`.github/workflows/deploy-vercel.yml`](.github/workflows/deploy-vercel.yml).
+This repository now includes [`../.github/workflows/deploy-vercel.yml`](../.github/workflows/deploy-vercel.yml).
 
 - Every push triggers deployment.
 - `main` or `master` deploys to Vercel Production.

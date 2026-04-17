@@ -19,6 +19,9 @@ jobs:
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
       VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+    defaults:
+      run:
+        working-directory: evsu-voting
 
     steps:
       - name: Checkout repository
@@ -32,9 +35,14 @@ jobs:
       - name: Install Vercel CLI
         run: npm install --global vercel@latest
 
-      - name: Validate Vercel configuration
+      - name: Validate configuration
         shell: bash
         run: |
+          if [[ ! -d "." ]]; then
+            echo "Project directory not found: evsu-voting"
+            exit 1
+          fi
+
           if [[ -z "$VERCEL_TOKEN" || -z "$VERCEL_ORG_ID" || -z "$VERCEL_PROJECT_ID" ]]; then
             echo "Missing one or more GitHub secrets: VERCEL_TOKEN, VERCEL_ORG_ID, VERCEL_PROJECT_ID"
             exit 1
