@@ -64,41 +64,21 @@ export default function VotePage({ params }) {
 
         let isEligible = false;
 
-        const { data: accountStudent } = await supabase
-          .from("students")
-          .select("id, organization_id")
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("student_id")
           .eq("id", user.id)
           .maybeSingle();
 
-        if (accountStudent?.id) {
-          if (String(accountStudent.organization_id || "") === electionOrganizationId) {
-            isEligible = true;
-          } else {
-            isEligible = await hasEligibleMembership(accountStudent.id);
-          }
-        }
-
-        if (!isEligible) {
-          const { data: profile } = await supabase
-            .from("profiles")
-            .select("student_id")
-            .eq("id", user.id)
+        if (profile?.student_id) {
+          const { data: student } = await supabase
+            .from("students")
+            .select("id")
+            .eq("student_id", profile.student_id)
             .maybeSingle();
 
-          if (profile?.student_id) {
-            const { data: legacyStudent } = await supabase
-              .from("students")
-              .select("id, organization_id")
-              .eq("student_id", profile.student_id)
-              .maybeSingle();
-
-            if (legacyStudent?.id) {
-              if (String(legacyStudent.organization_id || "") === electionOrganizationId) {
-                isEligible = true;
-              } else {
-                isEligible = await hasEligibleMembership(legacyStudent.id);
-              }
-            }
+          if (student?.id) {
+            isEligible = await hasEligibleMembership(student.id);
           }
         }
 
