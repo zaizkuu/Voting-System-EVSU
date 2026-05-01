@@ -53,7 +53,7 @@ export default function StudentDashboardPage() {
     if (profile?.student_id) {
       const { data: student } = await supabase
         .from("students")
-        .select("id, department, organization_id")
+        .select("id, department")
         .eq("student_id", profile.student_id)
         .maybeSingle();
 
@@ -66,9 +66,6 @@ export default function StudentDashboardPage() {
           .eq("student_id", student.id);
 
         organizationIds = (orgMemberships || []).map((row) => row.organization_id);
-        if (!organizationIds.length && student.organization_id) {
-          organizationIds = [student.organization_id];
-        }
 
         selectedOrganizationId = organizationIds[0] || "";
       }
@@ -127,7 +124,7 @@ export default function StudentDashboardPage() {
 
     const { error: studentUpdateError } = await supabase
       .from("students")
-      .update({ department, organization_id: organizationId })
+      .update({ department })
       .eq("id", studentRowId);
 
     if (studentUpdateError) {
