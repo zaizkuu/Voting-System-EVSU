@@ -7,8 +7,9 @@ import DataTable from "@/components/DataTable";
 import Modal from "@/components/Modal";
 import { 
   Users, User, Trophy, AlertCircle, Plus, Upload, 
-  Trash2, X, CheckCircle2, Image as ImageIcon 
+  Trash2, X, CheckCircle2, Image as ImageIcon, Download 
 } from "lucide-react";
+import { generateAttendanceReport } from "@/lib/pdf/generateReport";
 
 const ATTENDANCE_COLUMNS = [
   { key: "student_id", label: "Student ID" },
@@ -183,6 +184,29 @@ export default function ManageElectionPage({ params }) {
   const showMessage = (type, message) => {
     setStatus({ type, message });
     setTimeout(() => setStatus({ type: "", message: "" }), 4000);
+  };
+
+  const handleDownloadAttendance = () => {
+    if (!election || attendanceRows.length === 0) {
+      showMessage("error", "No attendance data available to download.");
+      return;
+    }
+
+    const voters = attendanceRows.map(row => ({
+      student_id: row.student_id,
+      full_name: row.full_name,
+      program: row.department,
+      year_level: row.year_level,
+      hasVoted: row.vote_status === "Voted",
+    }));
+
+    generateAttendanceReport({
+      electionTitle: election.title,
+      electionType: election.type,
+      electionStatus: election.status,
+      generatedAt: new Date().toLocaleString(),
+      voters,
+    });
   };
 
   const handlePhotoSelect = (e) => {
@@ -397,16 +421,27 @@ export default function ManageElectionPage({ params }) {
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 }}>
-          <button
-            type="button"
-            className="btn btn-outline"
-            onClick={() => setDeleteModalOpen(true)}
-            disabled={isDeletingElection}
-            style={{ borderColor: "var(--error)", color: "var(--error)", fontWeight: 700 }}
-          >
-            <Trash2 size={16} />
-            Delete Election
-          </button>
+          <div style={{ display: "flex", gap: 12 }}>
+            <button
+              type="button"
+              className="btn btn-outline"
+              onClick={handleDownloadAttendance}
+              style={{ fontWeight: 600 }}
+            >
+              <Download size={16} />
+              Attendance PDF
+            </button>
+            <button
+              type="button"
+              className="btn btn-outline"
+              onClick={() => setDeleteModalOpen(true)}
+              disabled={isDeletingElection}
+              style={{ borderColor: "var(--error)", color: "var(--error)", fontWeight: 700 }}
+            >
+              <Trash2 size={16} />
+              Delete Election
+            </button>
+          </div>
           <p style={{ margin: 0, fontSize: "0.75rem", color: "var(--gray-500)", textAlign: "right" }}>
             Permanently removes this election and all related records.
           </p>

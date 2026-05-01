@@ -221,3 +221,161 @@ export function generateReport({
   const safeStatus = sanitizeFileName(electionStatus || "report");
   doc.save(`${safeTitle}-${safeStatus}-results.pdf`);
 }
+
+export function generateAttendanceReport({
+  electionTitle,
+  electionType,
+  electionStatus,
+  generatedAt,
+  voters, // Array of { student_id, full_name, program, year_level, hasVoted }
+}) {
+  const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+  
+  drawCoverHeader({
+    doc,
+    electionTitle,
+    electionType,
+    electionStatus,
+    reportMode: "Attendance Report",
+    generatedAt,
+  });
+
+  const voted = voters.filter((v) => v.hasVoted);
+  const notVoted = voters.filter((v) => !v.hasVoted);
+
+  const summaryRows = [
+    ["Total Eligible Voters", String(voters.length)],
+    ["Total Voted", String(voted.length)],
+    ["Total Not Voted", String(notVoted.length)],
+    ["Turnout Percentage", voters.length ? `${((voted.length / voters.length) * 100).toFixed(1)}%` : "0.0%"],
+  ];
+
+  autoTable(doc, {
+    startY: 68,
+    head: [["Attendance Summary", "Count"]],
+    body: summaryRows,
+    theme: "grid",
+    styles: { fontSize: 10, cellPadding: 3, lineColor: COLORS.border, lineWidth: 0.2, textColor: COLORS.text },
+    headStyles: { fillColor: COLORS.maroon, textColor: COLORS.white, fontStyle: "bold" },
+    alternateRowStyles: { fillColor: COLORS.maroonSoft },
+  });
+
+  let currentY = doc.lastAutoTable.finalY + 10;
+
+  const renderTable = (title, dataList) => {
+    if (currentY > 230) {
+      doc.addPage();
+      currentY = 20;
+    }
+    
+    doc.setTextColor(...COLORS.maroon);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11.5);
+    doc.text(title, MARGIN, currentY + 5);
+
+    autoTable(doc, {
+      startY: currentY + 10,
+      head: [["Student ID", "Full Name", "Program", "Year Level", "Status"]],
+      body: dataList.map((v) => [v.student_id, v.full_name, v.program || "-", v.year_level || "-", v.hasVoted ? "VOTED" : "PENDING"]),
+      theme: "grid",
+      styles: { fontSize: 9.5, cellPadding: 2, lineColor: COLORS.border, lineWidth: 0.2 },
+      headStyles: { fillColor: [60, 60, 60], textColor: COLORS.white },
+      didParseCell: (data) => {
+        if (data.section === "body" && data.column.index === 4) {
+          data.cell.styles.textColor = data.cell.raw === "VOTED" ? [0, 128, 0] : [200, 0, 0];
+          data.cell.styles.fontStyle = "bold";
+        }
+      }
+    });
+    currentY = doc.lastAutoTable.finalY + 10;
+  };
+
+  renderTable("List of Students Who Voted", voted);
+  renderTable("List of Students Who Have Not Voted", notVoted);
+
+  drawFooter({ doc, reportMode: "Attendance Report", generatedAt });
+  doc.save(`${sanitizeFileName(electionTitle)}-attendance.pdf`);
+}
+
+export function generateRegistrationReport({ generatedAt, students }) {
+  const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+  
+  doc.setFillColor(...COLORS.maroon);
+  doc.rect(0, 0, PAGE_WIDTH, 34, "F");
+
+  doc.setTextColor(...COLORS.white);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(14);
+  doc.text("Eastern Visayas State University", MARGIN, 14);
+
+  doc.setFontSize(10);
+  doc.setFont("helvetica", "normal");
+  doc.text("Student Registration Report", MARGIN, 21);
+
+  doc.setTextColor(...COLORS.text);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(18);
+  doc.text("Student Masterlist", MARGIN, 45);
+  doc.setFontSize(10);
+  doc.setFont("helvetica", "normal");
+  doc.setTextColor(...COLORS.muted);
+  doc.text(`Generated: ${generatedAt}`, MARGIN, 52);
+
+  const registered = students.filter(s => s.is_registered);
+  
+  const summaryRows = [
+    ["Total Students Imported", String(students.length)],
+    ["Total Registered (Logged In)", String(registered.length)],
+    ["Total Unregistered", String(students.length - registered.length)],
+  ];
+
+  autoTable(doc, {
+    startY: 60,
+    head: [["Registration Summary", "Count"]],
+    body: summaryRows,
+    theme: "grid",
+    styles: { fontSize: 10, cellPadding: 3, lineColor: COLORS.border, lineWidth: 0.2, textColor: COLORS.text },
+    headStyles: { fillColor: COLORS.maroon, textColor: COLORS.white, fontStyle: "bold" },
+    alternateRowStyles: { fillColor: COLORS.maroonSoft },
+  });
+
+  let currentY = doc.lastAutoTable.finalY + 10;
+
+  const groupedByProgram = students.reduce((acc, student) => {
+    const prog = student.program || "Unspecified Program";
+    if (!acc[prog]) acc[prog] = [];
+    acc[prog].push(student);
+    return acc;
+  }, {});
+
+  Object.entries(groupedByProgram).forEach(([program, progStudents]) => {
+    if (currentY > 230) {
+      doc.addPage();
+      currentY = 20;
+    }
+    
+    doc.setTextColor(...COLORS.maroon);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11.5);
+    doc.text(`Program: ${program} (${progStudents.length} students)`, MARGIN, currentY + 5);
+
+    autoTable(doc, {
+      startY: currentY + 10,
+      head: [["Student ID", "Full Name", "Department", "Year Level", "Registered"]],
+      body: progStudents.map((s) => [s.student_id, s.full_name, s.department || "-", s.year_level || "-", s.is_registered ? "YES" : "NO"]),
+      theme: "grid",
+      styles: { fontSize: 9.5, cellPadding: 2, lineColor: COLORS.border, lineWidth: 0.2 },
+      headStyles: { fillColor: [60, 60, 60], textColor: COLORS.white },
+      didParseCell: (data) => {
+        if (data.section === "body" && data.column.index === 4) {
+          data.cell.styles.textColor = data.cell.raw === "YES" ? [0, 128, 0] : [200, 0, 0];
+          data.cell.styles.fontStyle = "bold";
+        }
+      }
+    });
+    currentY = doc.lastAutoTable.finalY + 10;
+  });
+
+  drawFooter({ doc, reportMode: "Registration Report", generatedAt });
+  doc.save(`student-registration-report.pdf`);
+}

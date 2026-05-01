@@ -5,6 +5,8 @@ import DataTable from "@/components/DataTable";
 import FileUpload from "@/components/FileUpload";
 import Modal from "@/components/Modal";
 import { createClient } from "@/lib/supabase/client";
+import { generateRegistrationReport } from "@/lib/pdf/generateReport";
+import { Download } from "lucide-react";
 
 const COLUMNS = [
   { key: "student_id", label: "Student ID" },
@@ -12,6 +14,7 @@ const COLUMNS = [
   { key: "program", label: "Program" },
   { key: "department", label: "Department" },
   { key: "year_level", label: "Year Level" },
+  { key: "is_registered", label: "Registered", format: (val) => val ? "Yes" : "No" },
 ];
 
 const createEmptyManualForm = () => ({
@@ -70,7 +73,7 @@ export default function AdminStudentsPage() {
 
     const { data, error } = await supabase
       .from("students")
-      .select("id, student_id, full_name, program, department, year_level")
+      .select("id, student_id, full_name, program, department, year_level, is_registered")
       .order("created_at", { ascending: false });
 
     if (error) {
@@ -171,6 +174,17 @@ export default function AdminStudentsPage() {
     setStatus(`Import complete. Processed ${uniqueRows.length} student records.`);
   };
 
+  const handleDownloadRegistrationReport = () => {
+    if (!rows || rows.length === 0) {
+      setStatus("No students available to generate a report.");
+      return;
+    }
+    generateRegistrationReport({
+      generatedAt: new Date().toLocaleString(),
+      students: rows
+    });
+  };
+
   const openManualModal = () => {
     setManualError("");
     setIsManualModalOpen(true);
@@ -261,6 +275,15 @@ export default function AdminStudentsPage() {
         </button>
         <button type="button" className="btn btn-primary" onClick={importRows} disabled={!previewRows.length}>
           Confirm Import
+        </button>
+        <button 
+          type="button" 
+          className="btn btn-outline" 
+          onClick={handleDownloadRegistrationReport} 
+          disabled={!rows.length}
+          style={{ display: "flex", gap: "8px", alignItems: "center" }}
+        >
+          <Download size={16} /> Registration PDF
         </button>
         {previewRows.length ? <p>Previewing {previewRows.length} row(s). Confirm import to save them.</p> : null}
       </div>
