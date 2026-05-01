@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import DataTable from "@/components/DataTable";
 import Modal from "@/components/Modal";
-import { createClient } from "@/lib/supabase/client";
+
 
 const COLUMNS = [
   { key: "name", label: "Organization" },
@@ -42,67 +42,7 @@ const chunkArray = (values, chunkSize) => {
   return chunks;
 };
 
-const fetchAllMembershipRows = async (supabase, organizationId = null) => {
-  const rows = [];
-  let from = 0;
 
-  while (true) {
-    let query = supabase
-      .from("student_organizations")
-      .select("id, student_id, organization_id")
-      .order("id", { ascending: true })
-      .range(from, from + MEMBERSHIP_PAGE_SIZE - 1);
-
-    if (organizationId) {
-      query = query.eq("organization_id", organizationId);
-    }
-
-    const { data, error } = await query;
-
-    if (error) {
-      return { data: null, error };
-    }
-
-    const batch = data || [];
-    if (!batch.length) {
-      break;
-    }
-
-    rows.push(...batch);
-    from += batch.length;
-  }
-
-  return { data: rows, error: null };
-};
-
-const fetchStudentsByColumnValues = async (supabase, columnName, values) => {
-  const normalizedValues = [...new Set(
-    values
-      .map((value) => String(value || "").trim())
-      .filter(Boolean),
-  )];
-
-  if (!normalizedValues.length) {
-    return { data: [], error: null };
-  }
-
-  const rows = [];
-
-  for (const valueChunk of chunkArray(normalizedValues, STUDENT_LOOKUP_CHUNK_SIZE)) {
-    const { data, error } = await supabase
-      .from("students")
-      .select("id, student_id")
-      .in(columnName, valueChunk);
-
-    if (error) {
-      return { data: null, error };
-    }
-
-    rows.push(...(data || []));
-  }
-
-  return { data: rows, error: null };
-};
 
 export default function OrganizationsPage() {
   const [organizationRows, setOrganizationRows] = useState([]);
@@ -123,39 +63,23 @@ export default function OrganizationsPage() {
   const [deleting, setDeleting] = useState(false);
 
   const loadRows = async () => {
-    const supabase = createClient();
-    const [{ data: organizations, error: organizationsError }, { data: memberships, error: membershipsError }] = await Promise.all([
-      supabase.from("organizations").select("id, name, description, created_at").order("name", { ascending: true }),
-      fetchAllMembershipRows(supabase),
-    ]);
+    try {
+      const res = await fetch("/api/organizations");
+      const data = await res.json();
+      if (!res.ok) { setStatus(data.error); setOrganizationRows([]); return; }
 
-    if (organizationsError) {
-      setStatus(`Unable to load organizations: ${organizationsError.message}`);
-      setOrganizationRows([]);
-      return;
-    }
+      const memberCountByOrganizationId = new Map();
+      (data.memberships || []).forEach((m) => {
+        if (!m.organization_id) return;
+        memberCountByOrganizationId.set(m.organization_id, (memberCountByOrganizationId.get(m.organization_id) || 0) + 1);
+      });
 
-    if (membershipsError) {
-      setStatus(`Unable to load membership counts: ${membershipsError.message}`);
-    }
-
-    const memberCountByOrganizationId = new Map();
-    (memberships || []).forEach((membership) => {
-      const organizationId = membership.organization_id;
-      if (!organizationId) return;
-      memberCountByOrganizationId.set(
-        organizationId,
-        (memberCountByOrganizationId.get(organizationId) || 0) + 1,
-      );
-    });
-
-    const normalizedRows = (organizations || []).map((organization) => ({
-      ...organization,
-      created_at: formatDate(organization.created_at),
-      member_count: memberCountByOrganizationId.get(organization.id) || 0,
-    }));
-
-    setOrganizationRows(normalizedRows);
+      setOrganizationRows((data.organizations || []).map((org) => ({
+        ...org,
+        created_at: formatDate(org.created_at),
+        member_count: memberCountByOrganizationId.get(org.id) || 0,
+      })));
+    } catch { setOrganizationRows([]); }
   };
 
   useEffect(() => {
@@ -166,22 +90,17 @@ export default function OrganizationsPage() {
 
   const createOrganization = async (event) => {
     event.preventDefault();
-    const supabase = createClient();
-
-    const { error } = await supabase.from("organizations").insert({
-      name: name.trim(),
-      description: description.trim() || null,
-    });
-
-    if (error) {
-      setStatus(error.message);
-      return;
-    }
-
-    setName("");
-    setDescription("");
-    setStatus("Organization created.");
-    await loadRows();
+    try {
+      const res = await fetch("/api/organizations", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: name.trim(), description: description.trim() || null }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setStatus(data.error); return; }
+      setName(""); setDescription("");
+      setStatus("Organization created.");
+      await loadRows();
+    } catch { setStatus("Unable to create organization."); }
   };
 
   const openEditModal = async (organization) => {
@@ -194,37 +113,22 @@ export default function OrganizationsPage() {
     setEditError("");
     setStatus("");
 
-    const supabase = createClient();
-    const { data: memberships, error: membershipsError } = await fetchAllMembershipRows(supabase, organization.id);
+    try {
+      const res = await fetch("/api/organizations");
+      const data = await res.json();
+      const memberships = (data.memberships || []).filter((m) => m.organization_id === organization.id);
+      const studentRowIds = memberships.map((m) => m.student_id).filter(Boolean);
+      if (!studentRowIds.length) return;
 
-    if (membershipsError) {
-      setEditError(`Unable to load organization members: ${membershipsError.message}`);
-      return;
+      const studentsRes = await fetch("/api/students");
+      const studentsData = await studentsRes.json();
+      const allStudents = studentsData.students || [];
+      const memberStudents = allStudents.filter((s) => studentRowIds.includes(s.id));
+      const sortedIds = memberStudents.map((s) => s.student_id).filter(Boolean).sort();
+      setEditForm((prev) => ({ ...prev, studentIdsText: sortedIds.join("\n") }));
+    } catch (err) {
+      setEditError("Unable to load organization members.");
     }
-
-    const studentRowIds = (memberships || []).map((row) => row.student_id).filter(Boolean);
-
-    if (!studentRowIds.length) {
-      return;
-    }
-
-    const { data: students, error: studentsError } = await fetchStudentsByColumnValues(supabase, "id", studentRowIds);
-
-    if (studentsError) {
-      setEditError(`Unable to load student IDs: ${studentsError.message}`);
-      return;
-    }
-
-    const sortedStudentIds = [...new Set(
-      (students || [])
-        .map((student) => String(student.student_id || "").trim())
-        .filter(Boolean),
-    )].sort((left, right) => left.localeCompare(right));
-
-    setEditForm((previous) => ({
-      ...previous,
-      studentIdsText: sortedStudentIds.join("\n"),
-    }));
   };
 
   const closeEditModal = () => {
@@ -251,106 +155,57 @@ export default function OrganizationsPage() {
     setEditError("");
     setStatus("");
 
-    const supabase = createClient();
-    const desiredStudentIds = parseStudentIds(editForm.studentIdsText);
+    try {
+      // Update org name/description
+      const updateRes = await fetch(`/api/organizations/${editingOrganization.id}`, {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: normalizedName, description: editForm.description.trim() || null }),
+      });
+      if (!updateRes.ok) { const d = await updateRes.json(); setEditError(d.error); setSavingEdit(false); return; }
 
-    const { error: organizationUpdateError } = await supabase
-      .from("organizations")
-      .update({
-        name: normalizedName,
-        description: editForm.description.trim() || null,
-      })
-      .eq("id", editingOrganization.id);
+      // Get desired student IDs and resolve to internal IDs
+      const desiredStudentIds = parseStudentIds(editForm.studentIdsText);
+      const studentsRes = await fetch("/api/students");
+      const studentsData = await studentsRes.json();
+      const allStudents = studentsData.students || [];
 
-    if (organizationUpdateError) {
-      setEditError(organizationUpdateError.message);
+      const desiredStudentRows = allStudents.filter((s) => desiredStudentIds.includes(s.student_id));
+      const foundIds = new Set(desiredStudentRows.map((s) => s.student_id));
+      const missingStudentIds = desiredStudentIds.filter((id) => !foundIds.has(id));
+
+      // Get current memberships
+      const orgsRes = await fetch("/api/organizations");
+      const orgsData = await orgsRes.json();
+      const currentMemberships = (orgsData.memberships || []).filter((m) => m.organization_id === editingOrganization.id);
+
+      const desiredRowIds = new Set(desiredStudentRows.map((s) => s.id));
+      const currentRowIds = new Set(currentMemberships.map((m) => m.student_id));
+
+      // Remove memberships no longer desired
+      const toRemove = currentMemberships.filter((m) => !desiredRowIds.has(m.student_id));
+      for (const m of toRemove) {
+        await fetch(`/api/organizations/${editingOrganization.id}/members?membershipId=${m.id}`, { method: "DELETE" });
+      }
+
+      // Add new memberships
+      const toAdd = desiredStudentRows.filter((s) => !currentRowIds.has(s.id));
+      for (const s of toAdd) {
+        await fetch(`/api/organizations/${editingOrganization.id}/members`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ student_id: s.id }),
+        });
+      }
+
+      const missingSuffix = missingStudentIds.length ? ` Student ID not found: ${missingStudentIds.join(", ")}.` : "";
+      setStatus(`Organization updated. Synced ${desiredRowIds.size} member(s).${missingSuffix}`);
       setSavingEdit(false);
-      return;
-    }
-
-    let desiredStudentRows = [];
-    let missingStudentIds = [];
-
-    if (desiredStudentIds.length) {
-      const { data: students, error: studentsError } = await fetchStudentsByColumnValues(
-        supabase,
-        "student_id",
-        desiredStudentIds,
-      );
-
-      if (studentsError) {
-        setEditError(`Unable to validate student IDs: ${studentsError.message}`);
-        setSavingEdit(false);
-        return;
-      }
-
-      desiredStudentRows = students || [];
-      const foundIds = new Set(desiredStudentRows.map((student) => student.student_id));
-      missingStudentIds = desiredStudentIds.filter((studentId) => !foundIds.has(studentId));
-    }
-
-    const { data: currentMemberships, error: currentMembershipsError } = await fetchAllMembershipRows(
-      supabase,
-      editingOrganization.id,
-    );
-
-    if (currentMembershipsError) {
-      setEditError(`Unable to load current memberships: ${currentMembershipsError.message}`);
+      setEditingOrganization(null);
+      setEditForm({ name: "", description: "", studentIdsText: "" });
+      await loadRows();
+    } catch (err) {
+      setEditError("Unable to save changes.");
       setSavingEdit(false);
-      return;
     }
-
-    const desiredStudentRowIds = new Set(desiredStudentRows.map((student) => student.id));
-    const currentStudentRowIds = new Set((currentMemberships || []).map((membership) => membership.student_id));
-
-    const membershipsToInsert = desiredStudentRows
-      .filter((student) => !currentStudentRowIds.has(student.id))
-      .map((student) => ({
-        student_id: student.id,
-        organization_id: editingOrganization.id,
-      }));
-
-    const membershipsToRemove = (currentMemberships || [])
-      .map((membership) => membership.student_id)
-      .filter((studentId) => !desiredStudentRowIds.has(studentId));
-
-    if (membershipsToRemove.length) {
-      for (const studentChunk of chunkArray(membershipsToRemove, STUDENT_LOOKUP_CHUNK_SIZE)) {
-        const { error: removeError } = await supabase
-          .from("student_organizations")
-          .delete()
-          .eq("organization_id", editingOrganization.id)
-          .in("student_id", studentChunk);
-
-        if (removeError) {
-          setEditError(`Unable to remove existing memberships: ${removeError.message}`);
-          setSavingEdit(false);
-          return;
-        }
-      }
-    }
-
-    if (membershipsToInsert.length) {
-      const { error: insertError } = await supabase
-        .from("student_organizations")
-        .upsert(membershipsToInsert, { onConflict: "student_id,organization_id", ignoreDuplicates: true });
-
-      if (insertError) {
-        setEditError(`Unable to assign new memberships: ${insertError.message}`);
-        setSavingEdit(false);
-        return;
-      }
-    }
-
-    const missingSuffix = missingStudentIds.length
-      ? ` Student ID not found: ${missingStudentIds.join(", ")}.`
-      : "";
-
-    setStatus(`Organization updated. Synced ${desiredStudentRowIds.size} member(s).${missingSuffix}`);
-    setSavingEdit(false);
-    setEditingOrganization(null);
-    setEditForm({ name: "", description: "", studentIdsText: "" });
-    await loadRows();
   };
 
   const openDeleteModal = (organization) => {
@@ -379,41 +234,19 @@ export default function OrganizationsPage() {
 
     setDeleting(true);
     setStatus("");
-    const supabase = createClient();
-
-    const { count: linkedElections, error: linkedElectionsError } = await supabase
-      .from("elections")
-      .select("id", { count: "exact", head: true })
-      .eq("organization_id", deletingOrganization.id);
-
-    if (linkedElectionsError) {
-      setStatus(`Unable to validate linked elections: ${linkedElectionsError.message}`);
+    try {
+      const res = await fetch(`/api/organizations/${deletingOrganization.id}`, { method: "DELETE" });
+      const data = await res.json();
+      if (!res.ok) { setStatus(data.error); setDeleting(false); return; }
       setDeleting(false);
-      return;
-    }
-
-    if ((linkedElections || 0) > 0) {
-      setStatus(`Cannot delete organization while ${linkedElections} election(s) still reference it.`);
+      setDeletingOrganization(null);
+      setDeleteConfirm("");
+      setStatus("Organization deleted.");
+      await loadRows();
+    } catch {
+      setStatus("Unable to delete organization.");
       setDeleting(false);
-      return;
     }
-
-    const { error } = await supabase
-      .from("organizations")
-      .delete()
-      .eq("id", deletingOrganization.id);
-
-    if (error) {
-      setStatus(`Unable to delete organization: ${error.message}`);
-      setDeleting(false);
-      return;
-    }
-
-    setDeleting(false);
-    setDeletingOrganization(null);
-    setDeleteConfirm("");
-    setStatus("Organization deleted.");
-    await loadRows();
   };
 
   const rows = useMemo(

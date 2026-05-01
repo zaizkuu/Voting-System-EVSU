@@ -1,46 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { createClient } from "@/lib/supabase/client";
 import { Eye, EyeOff } from "lucide-react";
 import styles from "../auth.module.css";
 
-function parseOrigin(value) {
-  try {
-    return new URL(String(value || "").trim()).origin;
-  } catch {
-    return null;
-  }
-}
-
-function isLocalhostOrigin(origin) {
-  try {
-    const hostname = new URL(origin).hostname;
-    return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]";
-  } catch {
-    return false;
-  }
-}
-
-function resolvePublicAppOrigin() {
-  const envOrigin = parseOrigin(process.env.NEXT_PUBLIC_APP_URL);
-  const browserOrigin = parseOrigin(window.location.origin);
-
-  if (envOrigin && !isLocalhostOrigin(envOrigin)) {
-    return envOrigin;
-  }
-
-  if (browserOrigin) {
-    return browserOrigin;
-  }
-
-  return envOrigin || "";
-}
-
 export default function RegisterPage() {
-  const router = useRouter();
   const [form, setForm] = useState({
     studentId: "",
     fullName: "",
@@ -48,6 +13,7 @@ export default function RegisterPage() {
     password: "",
   });
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
@@ -55,108 +21,38 @@ export default function RegisterPage() {
     setForm((previous) => ({ ...previous, [name]: value }));
   };
 
-  const sendRegistrationConfirmationEmail = async ({ userId, email, fullName }) => {
-    try {
-      await fetch("/api/auth/register-confirmation", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          userId,
-          email,
-          fullName,
-        }),
-      });
-    } catch {
-      // Registration should not fail when confirmation email delivery fails.
-    }
-  };
-
   const handleSubmit = async (event) => {
     event.preventDefault();
     setLoading(true);
     setError("");
+    setNotice("");
 
-    const supabase = createClient();
-    const normalizedStudentId = form.studentId.trim();
-    const normalizedEmail = form.email.trim().toLowerCase();
-    const normalizedFullName = form.fullName.trim();
+    try {
+      const response = await fetch("/api/auth/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          studentId: form.studentId.trim(),
+          fullName: form.fullName.trim(),
+          email: form.email.trim().toLowerCase(),
+          password: form.password,
+        }),
+      });
 
-    // Use SECURITY DEFINER RPC so registration can validate student IDs without exposing table reads to anon users.
-    const { data: validationResult, error: validationError } = await supabase
-      .rpc("validate_student_id", { p_student_id: normalizedStudentId });
+      const data = await response.json();
 
-    if (validationError) {
-      setError("Unable to validate student records right now. Please try again.");
+      if (!response.ok) {
+        setError(data.error || "Registration failed.");
+        setLoading(false);
+        return;
+      }
+
+      setNotice(data.message || "Account created. Please verify your email and sign in.");
       setLoading(false);
-      return;
-    }
-
-    if (!validationResult?.valid) {
-      setError(validationResult?.error || "Error: Invalid Student ID");
+    } catch {
+      setError("Unable to create account right now.");
       setLoading(false);
-      return;
     }
-
-    const profileFullName = String(validationResult.full_name || normalizedFullName || "").trim();
-    // Let Supabase verify first, then redirect directly to login.
-    const emailRedirectTo = `${resolvePublicAppOrigin()}/login?verified=1`;
-
-    const { data: authData, error: signUpError } = await supabase.auth.signUp({
-      email: normalizedEmail,
-      password: form.password,
-      options: {
-        emailRedirectTo,
-        data: {
-          student_id: normalizedStudentId,
-          full_name: profileFullName,
-        },
-      },
-    });
-
-    if (signUpError) {
-      setError(signUpError.message);
-      setLoading(false);
-      return;
-    }
-
-    if (!authData.user?.id) {
-      setError("Account created. Please verify your email then login.");
-      setLoading(false);
-      return;
-    }
-
-    void sendRegistrationConfirmationEmail({
-      userId: authData.user.id,
-      email: normalizedEmail,
-      fullName: profileFullName,
-    });
-
-    // With email confirmation enabled, there may be no active session yet.
-    // In that case we defer profile creation until first successful login.
-    if (!authData.session) {
-      setError("Account created. Please verify your email and sign in to complete setup.");
-      setLoading(false);
-      return;
-    }
-
-    const { error: profileError } = await supabase.from("profiles").insert({
-      id: authData.user.id,
-      student_id: normalizedStudentId,
-      full_name: profileFullName,
-      email: normalizedEmail,
-      role: "student",
-    });
-
-    if (profileError) {
-      setError(profileError.message);
-      setLoading(false);
-      return;
-    }
-
-    router.push("/student");
-    router.refresh();
   };
 
   return (
@@ -207,6 +103,7 @@ export default function RegisterPage() {
         </div>
 
         {error ? <p className="form-error">{error}</p> : null}
+        {notice ? <p className="alert info">{notice}</p> : null}
 
         <button className="btn btn-primary" type="submit" disabled={loading}>
           {loading ? "Creating account..." : "Register"}

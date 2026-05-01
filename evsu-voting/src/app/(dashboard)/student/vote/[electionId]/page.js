@@ -4,7 +4,7 @@ import React, { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import CandidateCard from "@/components/CandidateCard";
 import PolicyCard from "@/components/PolicyCard";
-import { createClient } from "@/lib/supabase/client";
+
 
 export default function VotePage({ params }) {
   const { electionId } = React.use(params);
@@ -19,192 +19,100 @@ export default function VotePage({ params }) {
 
   useEffect(() => {
     const loadElection = async () => {
-      const supabase = createClient();
+      try {
+        const [meRes, electionRes, votesRes, orgsRes] = await Promise.all([
+          fetch("/api/auth/me"),
+          fetch(`/api/elections/${electionId}`),
+          fetch(`/api/elections/${electionId}/votes`),
+          fetch("/api/organizations"),
+        ]);
+        const meData = await meRes.json();
+        const electionData = await electionRes.json();
+        const votesData = await votesRes.json();
+        const orgsData = await orgsRes.json();
 
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+        if (!meData.user) { router.push("/login"); return; }
+        if (!electionData.election) { setStatus({ loading: false, error: "Election not found.", message: "" }); return; }
+        if (electionData.election.status !== "active") { setStatus({ loading: false, error: "This election is not active.", message: "" }); return; }
 
-      if (!user) {
-        router.push("/login");
-        return;
-      }
-
-      const { data: electionData, error: electionError } = await supabase
-        .from("elections")
-        .select("*")
-        .eq("id", electionId)
-        .single();
-
-      if (electionError || !electionData) {
-        setStatus({ loading: false, error: "Election not found.", message: "" });
-        return;
-      }
-
-      if (electionData.status !== "active") {
-        setStatus({ loading: false, error: "This election is not active.", message: "" });
-        return;
-      }
-
-      if (electionData.organization_id) {
-        const electionOrganizationId = String(electionData.organization_id);
-
-        const hasEligibleMembership = async (studentId) => {
-          if (!studentId) return false;
-
-          const { data: membership } = await supabase
-            .from("student_organizations")
-            .select("id")
-            .eq("student_id", studentId)
-            .eq("organization_id", electionOrganizationId)
-            .maybeSingle();
-
-          return Boolean(membership);
-        };
-
-        let isEligible = false;
-
-        const { data: profile } = await supabase
-          .from("profiles")
-          .select("student_id")
-          .eq("id", user.id)
-          .maybeSingle();
-
-        if (profile?.student_id) {
-          const { data: student } = await supabase
-            .from("students")
-            .select("id")
-            .eq("student_id", profile.student_id)
-            .maybeSingle();
-
-          if (student?.id) {
-            isEligible = await hasEligibleMembership(student.id);
+        // Eligibility check for org-scoped elections
+        if (electionData.election.organization_id) {
+          let isEligible = false;
+          if (meData.user.studentId) {
+            const studentsRes = await fetch("/api/students");
+            const studentsData = await studentsRes.json();
+            const studentRecord = (studentsData.students || []).find((s) => s.student_id === meData.user.studentId);
+            if (studentRecord) {
+              isEligible = (orgsData.memberships || []).some(
+                (m) => m.student_id === studentRecord.id && m.organization_id === electionData.election.organization_id
+              );
+            }
           }
+          if (!isEligible) { setStatus({ loading: false, error: "This election is restricted to a specific organization.", message: "" }); return; }
         }
 
-        if (!isEligible) {
-          setStatus({ loading: false, error: "This election is restricted to a specific organization.", message: "" });
-          return;
+        if (votesData.hasVoted) setHasVoted(true);
+        setElection(electionData.election);
+
+        if (electionData.election.type === "policy") {
+          setPolicyOptions(electionData.policyOptions || []);
+        } else {
+          setPositions(electionData.positions || []);
+          const grouped = (electionData.candidates || []).reduce((acc, c) => {
+            (acc[c.position_id] = acc[c.position_id] || []).push(c);
+            return acc;
+          }, {});
+          setCandidatesByPosition(grouped);
         }
-      }
-
-      const { count } = await supabase
-        .from("votes")
-        .select("id", { count: "exact", head: true })
-        .eq("election_id", electionId)
-        .eq("voter_id", user.id);
-
-      if ((count || 0) > 0) {
-        setHasVoted(true);
-      }
-
-      setElection(electionData);
-
-      if (electionData.type === "policy") {
-        const { data: options } = await supabase
-          .from("policy_options")
-          .select("*")
-          .eq("election_id", electionId)
-          .order("display_order", { ascending: true });
-
-        setPolicyOptions(options || []);
-      } else {
-        const { data: positionsData } = await supabase
-          .from("positions")
-          .select("*")
-          .eq("election_id", electionId)
-          .order("display_order", { ascending: true });
-
-        const { data: candidatesData } = await supabase
-          .from("candidates")
-          .select("*")
-          .eq("election_id", electionId);
-
-        const grouped = (candidatesData || []).reduce((accumulator, candidate) => {
-          const list = accumulator[candidate.position_id] || [];
-          list.push(candidate);
-          accumulator[candidate.position_id] = list;
-          return accumulator;
-        }, {});
-
-        setPositions(positionsData || []);
-        setCandidatesByPosition(grouped);
-      }
-
-      setStatus({ loading: false, error: "", message: "" });
+        setStatus({ loading: false, error: "", message: "" });
+      } catch { setStatus({ loading: false, error: "Unable to load election.", message: "" }); }
     };
-
     loadElection();
   }, [electionId, router]);
 
   const handleSubmit = async (event) => {
     event.preventDefault();
-    
-    // Extract formData synchronously before any awaits
     const formData = new FormData(event.currentTarget);
+    if (!election) return;
 
-    const supabase = createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-
-    if (!user || !election) return;
-
-    const { count } = await supabase
-      .from("votes")
-      .select("id", { count: "exact", head: true })
-      .eq("election_id", electionId)
-      .eq("voter_id", user.id);
-
-    if ((count || 0) > 0) {
-      setStatus({ loading: false, error: "You already submitted your vote.", message: "" });
-      setHasVoted(true);
-      return;
-    }
-
+    let rows = [];
     if (election.type === "policy") {
-      const rows = policyOptions.map((option) => ({
-        election_id: electionId,
+      rows = policyOptions.map((option) => ({
         policy_option_id: option.id,
         policy_vote: String(formData.get(`policy_${option.id}`)),
-        voter_id: user.id,
       }));
-
-      const { error } = await supabase.from("votes").insert(rows);
-      if (error) {
-        setStatus({ loading: false, error: error.message, message: "" });
-        return;
-      }
     } else {
-      const rows = positions
-        .map((position) => {
-          const candidateId = formData.get(`position_${position.id}`);
-          if (!candidateId) return null;
-          return {
-            election_id: electionId,
-            position_id: position.id,
-            candidate_id: String(candidateId),
-            voter_id: user.id,
-          };
-        })
-        .filter(Boolean);
+      rows = positions.map((position) => {
+        const candidateId = formData.get(`position_${position.id}`);
+        if (!candidateId) return null;
+        return { position_id: position.id, candidate_id: String(candidateId) };
+      }).filter(Boolean);
 
       if (rows.length !== positions.length) {
         setStatus({ loading: false, error: "Please vote for all positions.", message: "" });
         return;
       }
-
-      const { error } = await supabase.from("votes").insert(rows);
-      if (error) {
-        setStatus({ loading: false, error: error.message, message: "" });
-        return;
-      }
     }
 
-    setStatus({ loading: false, error: "", message: "Vote submitted successfully." });
-    setHasVoted(true);
-    router.push(`/student`);
-    router.refresh();
+    try {
+      const res = await fetch(`/api/elections/${electionId}/votes`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ votes: rows }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setStatus({ loading: false, error: data.error, message: "" });
+        if (data.error?.includes("already")) setHasVoted(true);
+        return;
+      }
+      setStatus({ loading: false, error: "", message: "Vote submitted successfully." });
+      setHasVoted(true);
+      router.push("/student");
+      router.refresh();
+    } catch {
+      setStatus({ loading: false, error: "Unable to submit vote.", message: "" });
+    }
   };
 
   if (status.loading) {

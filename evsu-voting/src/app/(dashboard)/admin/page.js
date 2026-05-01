@@ -12,7 +12,7 @@ import {
   Clock,
   Zap,
 } from "lucide-react";
-import { createClient } from "@/lib/supabase/client";
+
 
 export default function AdminDashboardPage() {
   const [stats, setStats] = useState({
@@ -25,25 +25,13 @@ export default function AdminDashboardPage() {
 
   useEffect(() => {
     const loadStats = async () => {
-      const supabase = createClient();
-
-      const [students, elections, active, votes, recent] = await Promise.all([
-        supabase.from("students").select("id", { count: "exact", head: true }),
-        supabase.from("elections").select("id", { count: "exact", head: true }),
-        supabase.from("elections").select("id", { count: "exact", head: true }).eq("status", "active"),
-        supabase.from("votes").select("id", { count: "exact", head: true }),
-        supabase.from("elections").select("id, title, type, status, created_at").order("created_at", { ascending: false }).limit(5),
-      ]);
-
-      setStats({
-        students: students.count || 0,
-        elections: elections.count || 0,
-        active: active.count || 0,
-        votes: votes.count || 0,
-      });
-      setRecentElections(recent.data || []);
+      try {
+        const res = await fetch("/api/stats");
+        const data = await res.json();
+        if (data.stats) setStats(data.stats);
+        if (data.recentElections) setRecentElections(data.recentElections);
+      } catch {}
     };
-
     loadStats();
   }, []);
 

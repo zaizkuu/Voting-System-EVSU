@@ -4,36 +4,19 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { Eye, EyeOff } from "lucide-react";
-import { createClient } from "@/lib/supabase/client";
 import styles from "../auth.module.css";
-
-function maskEmail(value) {
-  const email = String(value || "").trim().toLowerCase();
-  const [localPart, domainPart] = email.split("@");
-
-  if (!localPart || !domainPart) {
-    return "your email";
-  }
-
-  const visibleStart = localPart.slice(0, 2);
-  const visibleEnd = localPart.slice(-1);
-  const maskedMiddle = "*".repeat(Math.max(2, localPart.length - 3));
-
-  return `${visibleStart}${maskedMiddle}${visibleEnd}@${domainPart}`;
-}
 
 export default function ResetPasswordPage() {
   const router = useRouter();
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [otp, setOtp] = useState("");
-  const [recoveryEmail, setRecoveryEmail] = useState("");
-  const [accessToken, setAccessToken] = useState("");
+  const [resetToken, setResetToken] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(false);
-  const [checkingSession, setCheckingSession] = useState(true);
-  const [hasRecoverySession, setHasRecoverySession] = useState(false);
+  const [checkingToken, setCheckingToken] = useState(true);
+  const [hasValidToken, setHasValidToken] = useState(false);
   const [otpSent, setOtpSent] = useState(false);
   const [otpVerified, setOtpVerified] = useState(false);
   const [sendingOtp, setSendingOtp] = useState(false);
@@ -44,41 +27,30 @@ export default function ResetPasswordPage() {
   const hasInitialized = useRef(false);
 
   useEffect(() => {
-    if (resendCooldown <= 0) {
-      return undefined;
-    }
-
+    if (resendCooldown <= 0) return undefined;
     const intervalId = setInterval(() => {
       setResendCooldown((previous) => (previous > 0 ? previous - 1 : 0));
     }, 1000);
-
     return () => clearInterval(intervalId);
   }, [resendCooldown]);
 
-  const sendOtp = async (token, isAutomatic = false) => {
+  const sendOtp = async (token) => {
     if (!token) {
-      setError("Reset session is missing. Request a new reset email.");
+      setError("Reset token is missing. Request a new reset email.");
       return;
     }
 
     setSendingOtp(true);
     setError("");
 
-    if (!isAutomatic) {
-      setNotice("");
-    }
-
     try {
       const response = await fetch("/api/auth/reset-password/otp/send", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token }),
       });
 
       const payload = await response.json();
-
       if (!response.ok) {
         setError(payload.error || "Unable to send OTP right now.");
         setSendingOtp(false);
@@ -97,119 +69,28 @@ export default function ResetPasswordPage() {
     setSendingOtp(false);
   };
 
-  const consumeRecoveryTokens = async (supabase, params) => {
-    const queryType = String(params.get("type") || "").trim();
-    const tokenHash =
-      params.get("token_hash")
-      || params.get("token")
-      || params.get("confirmation_token");
-    const code = params.get("code");
-
-    const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ""));
-    const hashAccessToken = String(hashParams.get("access_token") || "").trim();
-    const hashRefreshToken = String(hashParams.get("refresh_token") || "").trim();
-
-    let consumed = false;
-    let failed = false;
-
-    if (hashAccessToken && hashRefreshToken) {
-      const { error: setSessionError } = await supabase.auth.setSession({
-        access_token: hashAccessToken,
-        refresh_token: hashRefreshToken,
-      });
-      consumed = true;
-      failed = Boolean(setSessionError);
-    } else if (tokenHash) {
-      const allowedTypes = new Set([
-        "signup",
-        "invite",
-        "magiclink",
-        "recovery",
-        "email_change",
-        "email",
-      ]);
-
-      const normalizedType = allowedTypes.has(queryType) ? queryType : "recovery";
-      const { error: verifyError } = await supabase.auth.verifyOtp({
-        type: normalizedType,
-        token_hash: tokenHash,
-      });
-      consumed = true;
-      failed = Boolean(verifyError);
-    } else if (code) {
-      const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
-      consumed = true;
-      failed = Boolean(exchangeError);
-    }
-
-    if (consumed) {
-      const cleanedUrl = new URL(window.location.href);
-      cleanedUrl.hash = "";
-      cleanedUrl.searchParams.delete("code");
-      cleanedUrl.searchParams.delete("token_hash");
-      cleanedUrl.searchParams.delete("token");
-      cleanedUrl.searchParams.delete("confirmation_token");
-
-      if (!failed) {
-        cleanedUrl.searchParams.delete("error");
-      }
-
-      window.history.replaceState({}, "", `${cleanedUrl.pathname}${cleanedUrl.search}`);
-    }
-
-    return { consumed, failed };
-  };
-
   useEffect(() => {
-    if (hasInitialized.current) {
+    if (hasInitialized.current) return;
+    hasInitialized.current = true;
+
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get("token");
+
+    if (!token) {
+      setError("This reset link is invalid or expired. Request a new one from Forgot Password.");
+      setCheckingToken(false);
       return;
     }
 
-    hasInitialized.current = true;
-
-    const checkRecoverySession = async () => {
-      const params = new URLSearchParams(window.location.search);
-      const recoveryError = params.get("error");
-
-      const supabase = createClient();
-
-      const { consumed, failed } = await consumeRecoveryTokens(supabase, params);
-
-      let {
-        data: { session },
-      } = await supabase.auth.getSession();
-
-      if ((!session?.access_token || !session?.user?.email) && consumed && !failed) {
-        const {
-          data: { session: retriedSession },
-        } = await supabase.auth.getSession();
-        session = retriedSession;
-      }
-
-      if (!session?.access_token || !session?.user?.email) {
-        if (recoveryError === "recovery_link_invalid" || failed) {
-          setError("This reset link is invalid or expired. Request a new password reset email.");
-        } else {
-          setError("This reset link is invalid or expired. Request a new one from Forgot Password.");
-        }
-        setHasRecoverySession(false);
-        setCheckingSession(false);
-        return;
-      }
-
-      setAccessToken(session.access_token);
-      setRecoveryEmail(maskEmail(session.user.email));
-      setHasRecoverySession(true);
-      setCheckingSession(false);
-      await sendOtp(session.access_token, true);
-    };
-
-    void checkRecoverySession();
+    setResetToken(token);
+    setHasValidToken(true);
+    setCheckingToken(false);
+    void sendOtp(token);
   }, []);
 
   const handleVerifyOtp = async () => {
-    if (!hasRecoverySession || !accessToken) {
-      setError("Reset session is missing. Request a new reset email.");
+    if (!hasValidToken || !resetToken) {
+      setError("Reset token is missing. Request a new reset email.");
       return;
     }
 
@@ -226,15 +107,11 @@ export default function ResetPasswordPage() {
     try {
       const response = await fetch("/api/auth/reset-password/otp/verify", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${accessToken}`,
-        },
-        body: JSON.stringify({ otp: normalizedOtp }),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: resetToken, otp: normalizedOtp }),
       });
 
       const payload = await response.json();
-
       if (!response.ok) {
         setError(payload.error || "Unable to verify OTP right now.");
         setVerifyingOtp(false);
@@ -253,8 +130,8 @@ export default function ResetPasswordPage() {
   const handleSubmit = async (event) => {
     event.preventDefault();
 
-    if (!hasRecoverySession) {
-      setError("Reset session is missing. Request a new reset email.");
+    if (!hasValidToken) {
+      setError("Reset token is missing. Request a new reset email.");
       return;
     }
 
@@ -277,20 +154,14 @@ export default function ResetPasswordPage() {
     setError("");
     setNotice("");
 
-    const supabase = createClient();
-
     try {
       const response = await fetch("/api/auth/reset-password/update", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${accessToken}`,
-        },
-        body: JSON.stringify({ password: newPassword }),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: resetToken, password: newPassword }),
       });
 
       const payload = await response.json();
-
       if (!response.ok) {
         setError(payload.error || "Unable to update password right now.");
         setLoading(false);
@@ -298,16 +169,12 @@ export default function ResetPasswordPage() {
       }
 
       setNotice("Password updated successfully. Redirecting to login...");
-      await supabase.auth.signOut();
       router.push("/login?reset=1");
       router.refresh();
     } catch {
       setError("Unable to process password update right now.");
       setLoading(false);
-      return;
     }
-
-    setLoading(false);
   };
 
   return (
@@ -328,19 +195,18 @@ export default function ResetPasswordPage() {
             maxLength={6}
             value={otp}
             onChange={(event) => setOtp(event.target.value.replace(/\D/g, ""))}
-            disabled={checkingSession || !hasRecoverySession || otpVerified}
+            disabled={checkingToken || !hasValidToken || otpVerified}
             placeholder="Enter 6-digit OTP"
             required
           />
-          {recoveryEmail ? <p>OTP was sent to {recoveryEmail}.</p> : null}
         </div>
 
         <div className="button-row">
           <button
             className="btn btn-outline"
             type="button"
-            onClick={() => void sendOtp(accessToken)}
-            disabled={checkingSession || !hasRecoverySession || sendingOtp || resendCooldown > 0}
+            onClick={() => void sendOtp(resetToken)}
+            disabled={checkingToken || !hasValidToken || sendingOtp || resendCooldown > 0}
           >
             {sendingOtp
               ? "Sending OTP..."
@@ -355,7 +221,7 @@ export default function ResetPasswordPage() {
             className="btn btn-outline"
             type="button"
             onClick={handleVerifyOtp}
-            disabled={checkingSession || !hasRecoverySession || verifyingOtp || otpVerified || otp.trim().length !== 6}
+            disabled={checkingToken || !hasValidToken || verifyingOtp || otpVerified || otp.trim().length !== 6}
           >
             {otpVerified ? "OTP Verified" : verifyingOtp ? "Verifying OTP..." : "Verify OTP"}
           </button>
@@ -372,16 +238,10 @@ export default function ResetPasswordPage() {
               onChange={(event) => setNewPassword(event.target.value)}
               minLength={8}
               autoComplete="new-password"
-              disabled={checkingSession || !otpVerified || loading}
+              disabled={checkingToken || !otpVerified || loading}
               required
             />
-            <button
-              type="button"
-              className="password-toggle-btn"
-              onClick={() => setShowNewPassword((previous) => !previous)}
-              aria-label={showNewPassword ? "Hide new password" : "Show new password"}
-              aria-pressed={showNewPassword}
-            >
+            <button type="button" className="password-toggle-btn" onClick={() => setShowNewPassword((p) => !p)} aria-label={showNewPassword ? "Hide" : "Show"}>
               {showNewPassword ? <EyeOff size={18} aria-hidden="true" /> : <Eye size={18} aria-hidden="true" />}
             </button>
           </div>
@@ -398,16 +258,10 @@ export default function ResetPasswordPage() {
               onChange={(event) => setConfirmPassword(event.target.value)}
               minLength={8}
               autoComplete="new-password"
-              disabled={checkingSession || !otpVerified || loading}
+              disabled={checkingToken || !otpVerified || loading}
               required
             />
-            <button
-              type="button"
-              className="password-toggle-btn"
-              onClick={() => setShowConfirmPassword((previous) => !previous)}
-              aria-label={showConfirmPassword ? "Hide confirm password" : "Show confirm password"}
-              aria-pressed={showConfirmPassword}
-            >
+            <button type="button" className="password-toggle-btn" onClick={() => setShowConfirmPassword((p) => !p)} aria-label={showConfirmPassword ? "Hide" : "Show"}>
               {showConfirmPassword ? <EyeOff size={18} aria-hidden="true" /> : <Eye size={18} aria-hidden="true" />}
             </button>
           </div>
@@ -416,8 +270,8 @@ export default function ResetPasswordPage() {
         {error ? <p className="form-error">{error}</p> : null}
         {notice ? <p className="alert info">{notice}</p> : null}
 
-        <button className="btn btn-primary" type="submit" disabled={loading || checkingSession || !hasRecoverySession || !otpVerified}>
-          {loading ? "Updating password..." : checkingSession ? "Checking reset link..." : "Update Password"}
+        <button className="btn btn-primary" type="submit" disabled={loading || checkingToken || !hasValidToken || !otpVerified}>
+          {loading ? "Updating password..." : checkingToken ? "Checking reset link..." : "Update Password"}
         </button>
       </form>
 

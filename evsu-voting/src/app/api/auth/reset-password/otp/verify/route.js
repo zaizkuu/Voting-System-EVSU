@@ -1,142 +1,79 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
 import {
-  RESET_OTP_COOKIE,
-  RESET_OTP_MAX_ATTEMPTS,
-  RESET_OTP_TTL_SECONDS,
-  RESET_OTP_VERIFIED_COOKIE,
-  cookieOptions,
+  hashOtp,
+  getResetOtpSecret,
   decodeSignedState,
   encodeSignedState,
-  getResetOtpSecret,
-  hashOtp,
-  isValidEmail,
-  normalizeEmail,
   nowEpochSeconds,
+  RESET_OTP_COOKIE,
+  RESET_OTP_VERIFIED_COOKIE,
+  RESET_OTP_TTL_SECONDS,
+  RESET_OTP_MAX_ATTEMPTS,
+  cookieOptions,
 } from "@/lib/auth/resetOtp";
-
-function getBearerToken(request) {
-  const authorization = String(request.headers.get("authorization") || "").trim();
-  if (!authorization) {
-    return "";
-  }
-
-  const [scheme, token] = authorization.split(" ");
-  if (String(scheme || "").toLowerCase() !== "bearer") {
-    return "";
-  }
-
-  return String(token || "").trim();
-}
-
-function clearOtpCookies(response) {
-  response.cookies.set(RESET_OTP_COOKIE, "", { ...cookieOptions(0), maxAge: 0 });
-  response.cookies.set(RESET_OTP_VERIFIED_COOKIE, "", { ...cookieOptions(0), maxAge: 0 });
-  return response;
-}
+import { cookies } from "next/headers";
 
 export async function POST(request) {
   try {
-    const accessToken = getBearerToken(request);
-    if (!accessToken) {
-      return NextResponse.json({ error: "Authentication required." }, { status: 401 });
-    }
-
-    const payload = await request.json();
-    const otp = String(payload?.otp || "").trim();
+    const body = await request.json();
+    const otp = String(body?.otp || "").trim();
 
     if (!/^\d{6}$/.test(otp)) {
-      return NextResponse.json({ error: "Enter the 6-digit OTP." }, { status: 400 });
+      return NextResponse.json({ error: "Enter a valid 6-digit OTP code." }, { status: 400 });
     }
 
-    const supabaseUrl = String(process.env.NEXT_PUBLIC_SUPABASE_URL || "").trim();
-    const supabaseServiceRoleKey = String(process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
+    const cookieStore = await cookies();
+    const stateCookie = cookieStore.get(RESET_OTP_COOKIE)?.value;
 
-    if (!supabaseUrl || !supabaseServiceRoleKey) {
-      return NextResponse.json({ error: "Server is missing reset OTP configuration." }, { status: 500 });
+    if (!stateCookie) {
+      return NextResponse.json({ error: "OTP session expired. Request a new OTP." }, { status: 400 });
     }
 
-    const otpSecret = getResetOtpSecret();
-    if (!otpSecret) {
-      return NextResponse.json({ error: "Server is missing OTP secret configuration." }, { status: 500 });
-    }
-
-    const supabaseAdmin = createClient(supabaseUrl, supabaseServiceRoleKey, {
-      auth: {
-        autoRefreshToken: false,
-        persistSession: false,
-      },
-    });
-
-    const { data: userData, error: userError } = await supabaseAdmin.auth.getUser(accessToken);
-    const user = userData?.user;
-
-    if (userError || !user?.id || !isValidEmail(user.email)) {
-      return clearOtpCookies(NextResponse.json({ error: "Recovery session is invalid or expired." }, { status: 401 }));
-    }
-
-    const rawState = String(request.cookies.get(RESET_OTP_COOKIE)?.value || "").trim();
-    const state = decodeSignedState(rawState, otpSecret);
+    const secret = getResetOtpSecret();
+    const state = decodeSignedState(stateCookie, secret);
 
     if (!state) {
-      return clearOtpCookies(NextResponse.json({ error: "OTP session expired. Request a new OTP." }, { status: 400 }));
+      return NextResponse.json({ error: "OTP session is invalid. Request a new OTP." }, { status: 400 });
     }
 
-    const now = nowEpochSeconds();
-    if (!state.exp || now >= Number(state.exp)) {
-      return clearOtpCookies(NextResponse.json({ error: "OTP expired. Request a new OTP." }, { status: 400 }));
+    if (state.attempts >= RESET_OTP_MAX_ATTEMPTS) {
+      return NextResponse.json({ error: "Too many failed attempts. Request a new OTP." }, { status: 429 });
     }
 
-    const normalizedUserEmail = normalizeEmail(user.email);
-    if (String(state.uid || "") !== user.id || normalizeEmail(state.email) !== normalizedUserEmail) {
-      return clearOtpCookies(NextResponse.json({ error: "OTP session does not match this account." }, { status: 401 }));
+    const elapsed = nowEpochSeconds() - (state.createdAt || 0);
+    if (elapsed > RESET_OTP_TTL_SECONDS) {
+      return NextResponse.json({ error: "OTP has expired. Request a new one." }, { status: 400 });
     }
 
     const expectedHash = hashOtp({
       otp,
-      userId: user.id,
-      email: user.email,
-      nonce: String(state.nonce || ""),
-      secret: otpSecret,
+      userId: state.userId,
+      email: state.email,
+      nonce: state.nonce,
+      secret,
     });
 
-    if (String(state.otpHash || "") !== expectedHash) {
-      const attemptsLeft = Math.max(0, Number(state.attemptsLeft || RESET_OTP_MAX_ATTEMPTS) - 1);
-
-      if (attemptsLeft <= 0) {
-        return clearOtpCookies(NextResponse.json({ error: "Too many incorrect OTP attempts. Request a new OTP." }, { status: 429 }));
-      }
-
-      const updatedState = {
-        ...state,
-        attemptsLeft,
-      };
-
-      const maxAge = Math.max(1, Number(state.exp) - now);
-      const response = NextResponse.json(
-        { error: `Incorrect OTP. ${attemptsLeft} attempt(s) remaining.` },
-        { status: 400 }
-      );
-      response.cookies.set(RESET_OTP_COOKIE, encodeSignedState(updatedState, otpSecret), cookieOptions(maxAge));
+    if (expectedHash !== state.otpHash) {
+      state.attempts = (state.attempts || 0) + 1;
+      const updatedState = encodeSignedState(state, secret);
+      const response = NextResponse.json({ error: "Invalid OTP code. Try again." }, { status: 400 });
+      response.cookies.set(RESET_OTP_COOKIE, updatedState, cookieOptions(RESET_OTP_TTL_SECONDS));
       return response;
     }
 
-    const verifiedState = {
-      uid: user.id,
-      email: normalizedUserEmail,
-      exp: now + RESET_OTP_TTL_SECONDS,
-    };
+    const verifiedState = encodeSignedState({
+      userId: state.userId,
+      email: state.email,
+      verified: true,
+      verifiedAt: nowEpochSeconds(),
+    }, secret);
 
-    const response = NextResponse.json({ message: "OTP verified. You can now set your new password." });
-    response.cookies.set(
-      RESET_OTP_VERIFIED_COOKIE,
-      encodeSignedState(verifiedState, otpSecret),
-      cookieOptions(RESET_OTP_TTL_SECONDS)
-    );
-    response.cookies.set(RESET_OTP_COOKIE, "", { ...cookieOptions(0), maxAge: 0 });
+    const response = NextResponse.json({ message: "OTP verified. You can now set a new password." });
+    response.cookies.set(RESET_OTP_VERIFIED_COOKIE, verifiedState, cookieOptions(RESET_OTP_TTL_SECONDS));
+    response.cookies.set(RESET_OTP_COOKIE, "", cookieOptions(0));
     return response;
   } catch (error) {
-    console.error("reset-password otp verify error:", error);
+    console.error("OTP verify error:", error);
     return NextResponse.json({ error: "Unable to verify OTP right now." }, { status: 500 });
   }
 }

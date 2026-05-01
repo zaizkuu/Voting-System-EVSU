@@ -12,7 +12,7 @@ import {
   Legend,
 } from "chart.js";
 import { FileDown } from "lucide-react";
-import { createClient } from "@/lib/supabase/client";
+
 import { generateReport } from "@/lib/pdf/generateReport";
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend);
@@ -32,97 +32,53 @@ export default function AdminResultsPage({ params }) {
 
   useEffect(() => {
     const loadResults = async () => {
-      const supabase = createClient();
-
-      const { data: electionData } = await supabase
-        .from("elections")
-        .select("id, title, type, status")
-        .eq("id", electionId)
-        .single();
-
-      if (!electionData) {
-        setError("Election not found.");
-        setLoading(false);
-        return;
-      }
-
-      setElection(electionData);
-
-      if (electionData.type === "policy") {
-        const { data: options } = await supabase
-          .from("policy_options")
-          .select("id, title")
-          .eq("election_id", electionId);
-
-        const optionIds = (options || []).map((option) => option.id);
-        const { data: votes } = await supabase
-          .from("votes")
-          .select("policy_option_id, policy_vote")
-          .eq("election_id", electionId)
-          .in("policy_option_id", optionIds);
-
-        const grouped = (options || []).map((option) => {
-          const optionVotes = (votes || []).filter((vote) => vote.policy_option_id === option.id);
-          
-          const yesCount = optionVotes.filter((vote) => vote.policy_vote === "yes").length;
-          const noCount = optionVotes.filter((vote) => vote.policy_vote === "no").length;
-          const abstainCount = optionVotes.filter((vote) => vote.policy_vote === "abstain").length;
-
-          let winnerText = "TIE / Null";
-          if (yesCount > noCount) winnerText = "YES Passes";
-          if (noCount > yesCount) winnerText = "NO Reject";
-
-          return {
-            id: option.id,
-            title: option.title,
-            winner: winnerText,
-            options: [
-              { label: "Yes", count: yesCount },
-              { label: "No", count: noCount },
-              { label: "Abstain", count: abstainCount },
-            ],
-          };
-        });
-
-        setPositionsData(grouped);
-      } else {
-        const [{ data: positions }, { data: candidates }, { data: votes }] = await Promise.all([
-          supabase.from("positions").select("id, title").eq("election_id", electionId).order("display_order"),
-          supabase.from("candidates").select("id, position_id, full_name").eq("election_id", electionId),
-          supabase.from("votes").select("candidate_id").eq("election_id", electionId)
+      try {
+        const [electionRes, votesRes] = await Promise.all([
+          fetch(`/api/elections/${electionId}`),
+          fetch(`/api/elections/${electionId}/votes`),
         ]);
+        const electionData = await electionRes.json();
+        const votesData = await votesRes.json();
 
-        const grouped = (positions || []).map((position) => {
-          const posCandidates = (candidates || []).filter((c) => c.position_id === position.id);
-          
-          const options = posCandidates.map((candidate) => ({
-            label: candidate.full_name,
-            count: (votes || []).filter((vote) => vote.candidate_id === candidate.id).length,
-          }));
+        if (!electionData.election) { setError("Election not found."); setLoading(false); return; }
+        setElection(electionData.election);
 
-          // Sort descending
-          options.sort((a, b) => b.count - a.count);
-          
-          let winnerText = options[0]?.count > 0 ? options[0].label : "No Votes Cast";
-          // Handle ties naively
-          if (options.length > 1 && options[0]?.count === options[1]?.count && options[0].count > 0) {
-            winnerText = "TIE";
-          }
+        const positions = electionData.positions || [];
+        const candidates = electionData.candidates || [];
+        const policyOptions = electionData.policyOptions || [];
+        const votes = votesData.votes || [];
 
-          return {
-            id: position.id,
-            title: position.title,
-            winner: winnerText,
-            options,
-          };
-        });
-
-        setPositionsData(grouped);
-      }
-
+        if (electionData.election.type === "policy") {
+          const grouped = policyOptions.map((option) => {
+            const optionVotes = votes.filter((v) => v.policy_option_id === option.id);
+            const yesCount = optionVotes.filter((v) => v.policy_vote === "yes").length;
+            const noCount = optionVotes.filter((v) => v.policy_vote === "no").length;
+            const abstainCount = optionVotes.filter((v) => v.policy_vote === "abstain").length;
+            let winnerText = "TIE / Null";
+            if (yesCount > noCount) winnerText = "YES Passes";
+            if (noCount > yesCount) winnerText = "NO Reject";
+            return { id: option.id, title: option.title, winner: winnerText, options: [
+              { label: "Yes", count: yesCount }, { label: "No", count: noCount }, { label: "Abstain", count: abstainCount },
+            ]};
+          });
+          setPositionsData(grouped);
+        } else {
+          const grouped = positions.map((position) => {
+            const posCandidates = candidates.filter((c) => c.position_id === position.id);
+            const options = posCandidates.map((c) => ({
+              label: c.full_name,
+              count: votes.filter((v) => v.candidate_id === c.id).length,
+            }));
+            options.sort((a, b) => b.count - a.count);
+            let winnerText = options[0]?.count > 0 ? options[0].label : "No Votes Cast";
+            if (options.length > 1 && options[0]?.count === options[1]?.count && options[0].count > 0) winnerText = "TIE";
+            return { id: position.id, title: position.title, winner: winnerText, options };
+          });
+          setPositionsData(grouped);
+        }
+      } catch { setError("Unable to load results."); }
       setLoading(false);
     };
-
     loadResults();
   }, [electionId]);
 

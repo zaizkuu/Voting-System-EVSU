@@ -41,7 +41,7 @@ export function normalizeEmail(value) {
 }
 
 export function getResetOtpSecret() {
-  return String(process.env.RESET_OTP_SECRET || process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
+  return String(process.env.RESET_OTP_SECRET || process.env.JWT_SECRET || "").trim();
 }
 
 export function generateOtpCode() {

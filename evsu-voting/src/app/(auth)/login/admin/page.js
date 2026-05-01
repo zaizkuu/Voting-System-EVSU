@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { createClient } from "@/lib/supabase/client";
 import { Eye, EyeOff, Shield } from "lucide-react";
 
 export default function AdminLoginPage() {
@@ -19,37 +18,33 @@ export default function AdminLoginPage() {
     setLoading(true);
     setError("");
 
-    const supabase = createClient();
-    const { error: loginError } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
+    try {
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
+      const data = await res.json();
 
-    if (loginError) {
-      setError(loginError.message);
+      if (!res.ok) {
+        setError(data.error || "Login failed.");
+        setLoading(false);
+        return;
+      }
+
+      if (data.role !== "admin") {
+        await fetch("/api/auth/logout", { method: "POST" });
+        setError("Access denied. This login is for administrators only.");
+        setLoading(false);
+        return;
+      }
+
+      router.push("/admin");
+      router.refresh();
+    } catch {
+      setError("Unable to process login right now.");
       setLoading(false);
-      return;
     }
-
-    // Verify this user is actually an admin
-    const { data: { user } } = await supabase.auth.getUser();
-    
-    const { data: profileData } = await supabase
-      .from("profiles")
-      .select("role")
-      .eq("id", user?.id)
-      .single();
-
-    if (profileData?.role !== "admin") {
-      // Not an admin — sign them out and show error
-      await supabase.auth.signOut();
-      setError("Access denied. This login is for administrators only.");
-      setLoading(false);
-      return;
-    }
-
-    router.push("/admin");
-    router.refresh();
   };
 
   return (

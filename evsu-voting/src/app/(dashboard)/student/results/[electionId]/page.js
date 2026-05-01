@@ -11,7 +11,7 @@ import {
   Tooltip,
   Legend,
 } from "chart.js";
-import { createClient } from "@/lib/supabase/client";
+
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend);
 
@@ -24,147 +24,56 @@ export default function StudentResultsPage({ params }) {
 
   useEffect(() => {
     const loadResults = async () => {
-      const supabase = createClient();
-
-      const { data: electionData } = await supabase
-        .from("elections")
-        .select("id, title, type, status, organization_id")
-        .eq("id", electionId)
-        .single();
-
-      if (!electionData || electionData.status !== "completed") {
-        setError("Results are not yet available. Election is still ongoing.");
-        setLoading(false);
-        return;
-      }
-
-      if (electionData.organization_id) {
-        const {
-          data: { user },
-        } = await supabase.auth.getUser();
-
-        if (!user) {
-          setError("Please sign in to view election results.");
-          setLoading(false);
-          return;
-        }
-
-        const electionOrganizationId = String(electionData.organization_id);
-        const hasEligibleMembership = async (studentId) => {
-          if (!studentId) return false;
-
-          const { data: membership } = await supabase
-            .from("student_organizations")
-            .select("id")
-            .eq("student_id", studentId)
-            .eq("organization_id", electionOrganizationId)
-            .maybeSingle();
-
-          return Boolean(membership);
-        };
-
-        let isEligible = false;
-
-        const { data: profile } = await supabase
-          .from("profiles")
-          .select("student_id")
-          .eq("id", user.id)
-          .maybeSingle();
-
-        if (profile?.student_id) {
-          const { data: student } = await supabase
-            .from("students")
-            .select("id")
-            .eq("student_id", profile.student_id)
-            .maybeSingle();
-
-          if (student?.id) {
-            isEligible = await hasEligibleMembership(student.id);
-          }
-        }
-
-        if (!isEligible) {
-          setError("You are not eligible to view these election results.");
-          setLoading(false);
-          return;
-        }
-      }
-
-      setElection(electionData);
-
-      if (electionData.type === "policy") {
-        const { data: options } = await supabase
-          .from("policy_options")
-          .select("id, title")
-          .eq("election_id", electionId);
-
-        const optionIds = (options || []).map((option) => option.id);
-        const { data: votes } = await supabase
-          .from("votes")
-          .select("policy_option_id, policy_vote")
-          .eq("election_id", electionId)
-          .in("policy_option_id", optionIds);
-
-        const grouped = (options || []).map((option) => {
-          const optionVotes = (votes || []).filter((vote) => vote.policy_option_id === option.id);
-          
-          const yesCount = optionVotes.filter((vote) => vote.policy_vote === "yes").length;
-          const noCount = optionVotes.filter((vote) => vote.policy_vote === "no").length;
-          const abstainCount = optionVotes.filter((vote) => vote.policy_vote === "abstain").length;
-
-          let winnerText = "TIE / Null";
-          if (yesCount > noCount) winnerText = "YES Passes";
-          if (noCount > yesCount) winnerText = "NO Reject";
-
-          return {
-            id: option.id,
-            title: option.title,
-            winner: winnerText,
-            options: [
-              { label: "Yes", count: yesCount },
-              { label: "No", count: noCount },
-              { label: "Abstain", count: abstainCount },
-            ],
-          };
-        });
-
-        setPositionsData(grouped);
-      } else {
-        const [{ data: positions }, { data: candidates }, { data: votes }] = await Promise.all([
-          supabase.from("positions").select("id, title").eq("election_id", electionId).order("display_order"),
-          supabase.from("candidates").select("id, position_id, full_name").eq("election_id", electionId),
-          supabase.from("votes").select("candidate_id").eq("election_id", electionId)
+      try {
+        const [electionRes, votesRes] = await Promise.all([
+          fetch(`/api/elections/${electionId}`),
+          fetch(`/api/elections/${electionId}/votes`),
         ]);
+        const electionData = await electionRes.json();
+        const votesData = await votesRes.json();
 
-        const grouped = (positions || []).map((position) => {
-          const posCandidates = (candidates || []).filter((c) => c.position_id === position.id);
-          
-          const options = posCandidates.map((candidate) => ({
-            label: candidate.full_name,
-            count: (votes || []).filter((vote) => vote.candidate_id === candidate.id).length,
-          }));
+        if (!electionData.election || electionData.election.status !== "completed") {
+          setError("Results are not yet available. Election is still ongoing.");
+          setLoading(false); return;
+        }
 
-          options.sort((a, b) => b.count - a.count);
-          
-          let winnerText = options[0]?.count > 0 ? options[0].label : "No Votes Cast";
-          if (options.length > 1 && options[0]?.count === options[1]?.count && options[0].count > 0) {
-            winnerText = "TIE";
-          }
+        setElection(electionData.election);
+        const positions = electionData.positions || [];
+        const candidates = electionData.candidates || [];
+        const policyOptions = electionData.policyOptions || [];
+        const votes = votesData.votes || [];
 
-          return {
-            id: position.id,
-            title: position.title,
-            winner: winnerText,
-            options,
-          };
-        });
-
-        setPositionsData(grouped);
-      }
-
+        if (electionData.election.type === "policy") {
+          const grouped = policyOptions.map((option) => {
+            const optionVotes = votes.filter((v) => v.policy_option_id === option.id);
+            const yesCount = optionVotes.filter((v) => v.policy_vote === "yes").length;
+            const noCount = optionVotes.filter((v) => v.policy_vote === "no").length;
+            const abstainCount = optionVotes.filter((v) => v.policy_vote === "abstain").length;
+            let winnerText = "TIE / Null";
+            if (yesCount > noCount) winnerText = "YES Passes";
+            if (noCount > yesCount) winnerText = "NO Reject";
+            return { id: option.id, title: option.title, winner: winnerText, options: [
+              { label: "Yes", count: yesCount }, { label: "No", count: noCount }, { label: "Abstain", count: abstainCount },
+            ]};
+          });
+          setPositionsData(grouped);
+        } else {
+          const grouped = positions.map((position) => {
+            const posCandidates = candidates.filter((c) => c.position_id === position.id);
+            const options = posCandidates.map((c) => ({
+              label: c.full_name,
+              count: votes.filter((v) => v.candidate_id === c.id).length,
+            }));
+            options.sort((a, b) => b.count - a.count);
+            let winnerText = options[0]?.count > 0 ? options[0].label : "No Votes Cast";
+            if (options.length > 1 && options[0]?.count === options[1]?.count && options[0].count > 0) winnerText = "TIE";
+            return { id: position.id, title: position.title, winner: winnerText, options };
+          });
+          setPositionsData(grouped);
+        }
+      } catch { setError("Unable to load results."); }
       setLoading(false);
     };
-
     loadResults();
   }, [electionId]);
 

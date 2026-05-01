@@ -11,7 +11,7 @@ import {
   X,
   ChevronRight,
 } from "lucide-react";
-import { createClient } from "@/lib/supabase/client";
+
 
 export default function Navbar({ role }) {
   const router = useRouter();
@@ -21,19 +21,17 @@ export default function Navbar({ role }) {
 
   useEffect(() => {
     const loadUser = async () => {
-      const supabase = createClient();
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("full_name")
-        .single();
-      if (profile?.full_name) setUserName(profile.full_name);
+      try {
+        const res = await fetch("/api/auth/me");
+        const data = await res.json();
+        if (data.user?.fullName) setUserName(data.user.fullName);
+      } catch {}
     };
     loadUser();
   }, []);
 
   const handleLogout = async () => {
-    const supabase = createClient();
-    await supabase.auth.signOut();
+    await fetch("/api/auth/logout", { method: "POST" });
     router.push("/login");
     router.refresh();
   };

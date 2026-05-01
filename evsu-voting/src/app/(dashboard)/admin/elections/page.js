@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import ElectionCard from "@/components/ElectionCard";
-import { createClient } from "@/lib/supabase/client";
+
 
 const INITIAL_FORM = {
   title: "",
@@ -22,15 +22,12 @@ export default function AdminElectionsPage() {
   const [status, setStatus] = useState("");
 
   const loadData = async () => {
-    const supabase = createClient();
-
-    const [{ data: electionRows }, { data: organizationRows }] = await Promise.all([
-      supabase.from("elections").select("*").order("created_at", { ascending: false }),
-      supabase.from("organizations").select("id, name").order("name", { ascending: true }),
-    ]);
-
-    setElections(electionRows || []);
-    setOrganizations(organizationRows || []);
+    try {
+      const res = await fetch("/api/elections");
+      const data = await res.json();
+      setElections(data.elections || []);
+      setOrganizations(data.organizations || []);
+    } catch {}
   };
 
   useEffect(() => {
@@ -41,38 +38,34 @@ export default function AdminElectionsPage() {
 
   const createElection = async (event) => {
     event.preventDefault();
-    const supabase = createClient();
 
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    try {
+      const res = await fetch("/api/elections", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: form.title,
+          description: form.description,
+          type: form.type,
+          status: form.status,
+          start_date: form.start_date || null,
+          end_date: form.end_date || null,
+          organization_id: form.voter_scope === "organization" ? form.organization_id || null : null,
+        }),
+      });
 
-    if (!user) {
-      setStatus("You must be logged in.");
-      return;
+      const data = await res.json();
+      if (!res.ok) {
+        setStatus(data.error || "Failed to create election.");
+        return;
+      }
+
+      setStatus("Election created.");
+      setForm(INITIAL_FORM);
+      await loadData();
+    } catch {
+      setStatus("Unable to create election.");
     }
-
-    const payload = {
-      title: form.title,
-      description: form.description,
-      type: form.type,
-      status: form.status,
-      start_date: form.start_date || null,
-      end_date: form.end_date || null,
-      organization_id: form.voter_scope === "organization" ? form.organization_id || null : null,
-      created_by: user.id,
-    };
-
-    const { error } = await supabase.from("elections").insert(payload);
-
-    if (error) {
-      setStatus(error.message);
-      return;
-    }
-
-    setStatus("Election created.");
-    setForm(INITIAL_FORM);
-    await loadData();
   };
 
   return (

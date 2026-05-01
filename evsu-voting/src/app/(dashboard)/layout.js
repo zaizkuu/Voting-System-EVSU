@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import Navbar from "@/components/Navbar";
-import { createClient } from "@/lib/supabase/client";
 
 export default function DashboardLayout({ children }) {
   const [role, setRole] = useState(null);
@@ -10,16 +9,13 @@ export default function DashboardLayout({ children }) {
 
   useEffect(() => {
     const loadRole = async () => {
-      const supabase = createClient();
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        const { data: profile } = await supabase
-          .from("profiles")
-          .select("role")
-          .eq("id", user.id)
-          .single();
-        setRole(profile?.role || "student");
-      }
+      try {
+        const res = await fetch("/api/auth/me");
+        const data = await res.json();
+        if (data.user) {
+          setRole(data.user.role || "student");
+        }
+      } catch {}
       setLoaded(true);
     };
     loadRole();

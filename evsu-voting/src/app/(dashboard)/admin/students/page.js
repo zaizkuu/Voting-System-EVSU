@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import DataTable from "@/components/DataTable";
 import FileUpload from "@/components/FileUpload";
 import Modal from "@/components/Modal";
-import { createClient } from "@/lib/supabase/client";
+
 import { generateRegistrationReport } from "@/lib/pdf/generateReport";
 import { Download } from "lucide-react";
 
@@ -69,21 +69,19 @@ export default function AdminStudentsPage() {
 
   const loadStudentRows = async () => {
     setLoadingRows(true);
-    const supabase = createClient();
-
-    const { data, error } = await supabase
-      .from("students")
-      .select("id, student_id, full_name, program, department, year_level, is_registered")
-      .order("created_at", { ascending: false });
-
-    if (error) {
-      setStatus(`Unable to load student records: ${error.message}`);
+    try {
+      const res = await fetch("/api/students");
+      const data = await res.json();
+      if (!res.ok) {
+        setStatus(`Unable to load student records: ${data.error}`);
+        setRows([]);
+      } else {
+        setRows(data.students || []);
+      }
+    } catch {
+      setStatus("Unable to load student records right now.");
       setRows([]);
-      setLoadingRows(false);
-      return;
     }
-
-    setRows(data || []);
     setLoadingRows(false);
   };
 
@@ -94,84 +92,38 @@ export default function AdminStudentsPage() {
 
   const importRows = async () => {
     if (!previewRows.length) return;
-
     setStatus("Importing records...");
-    const supabase = createClient();
 
-    // Prevent Postgres ON CONFLICT errors by merging duplicate Student IDs first.
     const uniqueRows = buildUniqueStudentRows(previewRows);
     if (!uniqueRows.length) {
       setStatus("Import failed: No valid student rows found.");
       return;
     }
 
-    const studentsPayload = uniqueRows.map((row) => ({
-      student_id: row.student_id,
-      full_name: row.full_name,
-      email: null,
-      program: row.program,
-      department: row.department,
-      year_level: row.year_level,
-      is_registered: false,
-    }));
-
-    const { error: studentsError } = await supabase
-      .from("students")
-      .upsert(studentsPayload, { onConflict: "student_id", ignoreDuplicates: false });
-
-    if (studentsError) {
-      setStatus(`Import failed: ${studentsError.message}`);
-      return;
-    }
-
-    const orgNames = [...new Set(uniqueRows.flatMap((row) => row.organizations || []))];
-
-    if (orgNames.length) {
-      const { error: organizationsError } = await supabase
-        .from("organizations")
-        .upsert(orgNames.map((name) => ({ name })), { onConflict: "name", ignoreDuplicates: false });
-
-      if (organizationsError) {
-        setStatus(`Students imported, but organization sync failed: ${organizationsError.message}`);
+    try {
+      const res = await fetch("/api/students", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rows: uniqueRows }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setStatus(`Import failed: ${data.error}`);
         return;
       }
 
-      const [{ data: students }, { data: organizations }] = await Promise.all([
-        supabase.from("students").select("id, student_id").in("student_id", uniqueRows.map((row) => row.student_id)),
-        supabase.from("organizations").select("id, name").in("name", orgNames),
-      ]);
+      const duplicateCount = previewRows.length - uniqueRows.length;
+      setPreviewRows([]);
+      await loadStudentRows();
 
-      const studentMap = new Map((students || []).map((item) => [item.student_id, item.id]));
-      const orgMap = new Map((organizations || []).map((item) => [item.name, item.id]));
-
-      const membershipRows = [];
-      uniqueRows.forEach((row) => {
-        const studentId = studentMap.get(row.student_id);
-        if (!studentId) return;
-        (row.organizations || []).forEach((org) => {
-          const orgId = orgMap.get(org);
-          if (!orgId) return;
-          membershipRows.push({ student_id: studentId, organization_id: orgId });
-        });
-      });
-
-      if (membershipRows.length) {
-        await supabase
-          .from("student_organizations")
-          .upsert(membershipRows, { onConflict: "student_id,organization_id", ignoreDuplicates: true });
+      if (duplicateCount > 0) {
+        setStatus(`Import complete. Processed ${uniqueRows.length} unique students from ${previewRows.length} rows. Merged ${duplicateCount} duplicate Student ID rows.`);
+        return;
       }
+      setStatus(data.message || `Import complete. Processed ${uniqueRows.length} student records.`);
+    } catch {
+      setStatus("Unable to import student records right now.");
     }
-
-    const duplicateCount = previewRows.length - uniqueRows.length;
-    setPreviewRows([]);
-    await loadStudentRows();
-
-    if (duplicateCount > 0) {
-      setStatus(`Import complete. Processed ${uniqueRows.length} unique students from ${previewRows.length} rows. Merged ${duplicateCount} duplicate Student ID rows.`);
-      return;
-    }
-
-    setStatus(`Import complete. Processed ${uniqueRows.length} student records.`);
   };
 
   const handleDownloadRegistrationReport = () => {

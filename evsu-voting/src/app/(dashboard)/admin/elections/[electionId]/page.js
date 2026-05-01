@@ -2,7 +2,6 @@
 
 import React, { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
 import DataTable from "@/components/DataTable";
 import Modal from "@/components/Modal";
 import { 
@@ -62,114 +61,25 @@ export default function ManageElectionPage({ params }) {
 
   const loadData = async () => {
     setIsLoading(true);
-    const supabase = createClient();
 
-    const [{ data: electionData }, { data: positionData }, { data: candidateData }, { data: policyData }] =
-      await Promise.all([
-        supabase.from("elections").select("*").eq("id", electionId).single(),
-        supabase.from("positions").select("*").eq("election_id", electionId).order("display_order", { ascending: true }),
-        supabase.from("candidates").select("*").eq("election_id", electionId).order("full_name", { ascending: true }),
-        supabase.from("policy_options").select("*").eq("election_id", electionId).order("display_order", { ascending: true }),
+    try {
+      const [electionRes, attendanceRes] = await Promise.all([
+        fetch(`/api/elections/${electionId}`),
+        fetch(`/api/elections/${electionId}/attendance`),
       ]);
 
-    setElection(electionData);
-    setPositions(positionData || []);
-    setCandidates(candidateData || []);
-    setPolicyOptions(policyData || []);
+      const electionData = await electionRes.json();
+      const attendanceData = await attendanceRes.json();
 
-    if (electionData) {
-      let eligibleStudents = [];
+      setElection(electionData.election || null);
+      setPositions(electionData.positions || []);
+      setCandidates(electionData.candidates || []);
+      setPolicyOptions(electionData.policyOptions || []);
 
-      if (electionData.organization_id) {
-        const eligibleStudentMap = new Map();
-
-        const { data: directOrganizationStudents } = await supabase
-          .from("students")
-          .select("id, student_id, full_name, department, year_level")
-          .eq("organization_id", electionData.organization_id);
-
-        (directOrganizationStudents || []).forEach((student) => {
-          eligibleStudentMap.set(student.id, student);
-        });
-
-        const { data: membershipRows } = await supabase
-          .from("student_organizations")
-          .select("student_id")
-          .eq("organization_id", electionData.organization_id);
-
-        const eligibleStudentIds = [...new Set((membershipRows || []).map((item) => item.student_id))];
-
-        if (eligibleStudentIds.length) {
-          const { data: scopedStudents } = await supabase
-            .from("students")
-            .select("id, student_id, full_name, department, year_level")
-            .in("id", eligibleStudentIds)
-            .order("full_name", { ascending: true });
-
-          (scopedStudents || []).forEach((student) => {
-            eligibleStudentMap.set(student.id, student);
-          });
-        }
-
-        eligibleStudents = [...eligibleStudentMap.values()].sort((a, b) =>
-          String(a.full_name || "").localeCompare(String(b.full_name || ""))
-        );
-      } else {
-        const { data: allStudents } = await supabase
-          .from("students")
-          .select("id, student_id, full_name, department, year_level")
-          .order("full_name", { ascending: true });
-
-        eligibleStudents = allStudents || [];
-      }
-
-      let profileRows = [];
-      const eligibleStudentCodes = eligibleStudents.map((student) => student.student_id).filter(Boolean);
-
-      if (eligibleStudentCodes.length) {
-        const { data: studentProfiles } = await supabase
-          .from("profiles")
-          .select("id, student_id, full_name")
-          .eq("role", "student")
-          .in("student_id", eligibleStudentCodes);
-
-        profileRows = studentProfiles || [];
-      }
-
-      const { data: voteRows } = await supabase
-        .from("votes")
-        .select("voter_id")
-        .eq("election_id", electionId);
-
-      const profileByStudentId = new Map(profileRows.map((profile) => [profile.student_id, profile]));
-      const votedProfileIds = new Set((voteRows || []).map((vote) => vote.voter_id));
-
-      const attendance = eligibleStudents.map((student) => {
-        const profile = profileByStudentId.get(student.student_id);
-        const hasVoted = profile ? votedProfileIds.has(profile.id) : false;
-
-        return {
-          id: student.id,
-          student_id: student.student_id,
-          full_name: profile?.full_name || student.full_name,
-          department: student.department || "-",
-          year_level: student.year_level || "-",
-          account_status: profile ? "Registered" : "No Account",
-          vote_status: hasVoted ? "Voted" : "Not Yet",
-        };
-      });
-
-      const votedCount = attendance.filter((item) => item.vote_status === "Voted").length;
-
-      setAttendanceRows(attendance);
-      setAttendanceSummary({
-        eligible: attendance.length,
-        voted: votedCount,
-        pending: Math.max(0, attendance.length - votedCount),
-      });
-    } else {
-      setAttendanceRows([]);
-      setAttendanceSummary({ eligible: 0, voted: 0, pending: 0 });
+      setAttendanceRows(attendanceData.attendance || []);
+      setAttendanceSummary(attendanceData.summary || { eligible: 0, voted: 0, pending: 0 });
+    } catch (error) {
+      console.error("Load data error:", error);
     }
 
     setIsLoading(false);
@@ -238,20 +148,13 @@ export default function ManageElectionPage({ params }) {
   const addPosition = async (event) => {
     event.preventDefault();
     setIsSubmitting(true);
-    const supabase = createClient();
-    const { error } = await supabase.from("positions").insert({
-      election_id: electionId,
-      title: positionForm.title,
-      max_votes: Number(positionForm.max_votes || 1),
-      display_order: positions.length,
+    const res = await fetch(`/api/elections/${electionId}/positions`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: positionForm.title, max_votes: Number(positionForm.max_votes || 1), display_order: positions.length }),
     });
-
+    const data = await res.json();
     setIsSubmitting(false);
-    if (error) {
-      showMessage("error", error.message);
-      return;
-    }
-
+    if (!res.ok) { showMessage("error", data.error); return; }
     setPositionForm({ title: "", max_votes: 1 });
     showMessage("success", "Position added successfully.");
     await loadData();
@@ -259,69 +162,55 @@ export default function ManageElectionPage({ params }) {
 
   const deletePosition = async (id) => {
     if (!confirm("Delete this position? All candidates inside will also be deleted.")) return;
-    const supabase = createClient();
-    const { error } = await supabase.from("positions").delete().eq("id", id);
-    if (error) showMessage("error", error.message);
+    const res = await fetch(`/api/elections/${electionId}/positions?positionId=${id}`, { method: "DELETE" });
+    if (!res.ok) { const d = await res.json(); showMessage("error", d.error); }
     else await loadData();
   };
 
   const deleteCandidate = async (id) => {
     if (!confirm("Are you sure you want to remove this candidate?")) return;
-    const supabase = createClient();
-    const { error } = await supabase.from("candidates").delete().eq("id", id);
-    if (error) showMessage("error", error.message);
+    const res = await fetch(`/api/elections/${electionId}/candidates?candidateId=${id}`, { method: "DELETE" });
+    if (!res.ok) { const d = await res.json(); showMessage("error", d.error); }
     else await loadData();
   };
 
   const addCandidate = async (event) => {
     event.preventDefault();
     setIsSubmitting(true);
-    const supabase = createClient();
-
     let uploadedPhotoUrl = null;
 
     // 1. Upload photo if selected
     if (photoFile) {
-      const fileExt = photoFile.name.split('.').pop();
-      const fileName = `${electionId}/${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
-      
-      const { error: uploadError, data } = await supabase.storage
-        .from("candidate-photos")
-        .upload(fileName, photoFile);
-
-      if (uploadError) {
-        showMessage("error", `Photo upload failed: ${uploadError.message}`);
+      const formData = new FormData();
+      formData.append("file", photoFile);
+      const uploadRes = await fetch("/api/upload", { method: "POST", body: formData });
+      const uploadData = await uploadRes.json();
+      if (!uploadRes.ok) {
+        showMessage("error", `Photo upload failed: ${uploadData.error}`);
         setIsSubmitting(false);
         return;
       }
-
-      // Get the public URL for the uploaded photo
-      const { data: publicUrlData } = supabase.storage
-        .from("candidate-photos")
-        .getPublicUrl(fileName);
-        
-      uploadedPhotoUrl = publicUrlData.publicUrl;
+      uploadedPhotoUrl = uploadData.url;
     }
 
     // 2. Insert Candidate record
-    const { error } = await supabase.from("candidates").insert({
-      election_id: electionId,
-      position_id: candidateForm.position_id,
-      full_name: candidateForm.full_name,
-      party: candidateForm.party || "Independent",
-      motto: candidateForm.motto || null,
-      platform: candidateForm.platform || null,
-      department: candidateForm.department || null,
-      year_level: candidateForm.year_level || null,
-      photo_url: uploadedPhotoUrl,
+    const res = await fetch(`/api/elections/${electionId}/candidates`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        position_id: candidateForm.position_id,
+        full_name: candidateForm.full_name,
+        party: candidateForm.party || "Independent",
+        motto: candidateForm.motto || null,
+        platform: candidateForm.platform || null,
+        department: candidateForm.department || null,
+        year_level: candidateForm.year_level || null,
+        photo_url: uploadedPhotoUrl,
+      }),
     });
 
     setIsSubmitting(false);
-
-    if (error) {
-      showMessage("error", error.message);
-      return;
-    }
+    const data = await res.json();
+    if (!res.ok) { showMessage("error", data.error); return; }
 
     // Reset Form
     setCandidateForm({
@@ -335,21 +224,13 @@ export default function ManageElectionPage({ params }) {
   const addPolicyOption = async (event) => {
     event.preventDefault();
     setIsSubmitting(true);
-    const supabase = createClient();
-
-    const { error } = await supabase.from("policy_options").insert({
-      election_id: electionId,
-      title: policyForm.title,
-      description: policyForm.description,
-      display_order: policyOptions.length,
+    const res = await fetch(`/api/elections/${electionId}/policy-options`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: policyForm.title, description: policyForm.description, display_order: policyOptions.length }),
     });
-
+    const data = await res.json();
     setIsSubmitting(false);
-    if (error) {
-      showMessage("error", error.message);
-      return;
-    }
-
+    if (!res.ok) { showMessage("error", data.error); return; }
     setPolicyForm({ title: "", description: "" });
     showMessage("success", "Policy item added.");
     await loadData();
@@ -370,15 +251,10 @@ export default function ManageElectionPage({ params }) {
     }
 
     setIsDeletingElection(true);
-    const supabase = createClient();
-
-    const { error } = await supabase
-      .from("elections")
-      .delete()
-      .eq("id", electionId);
-
-    if (error) {
-      showMessage("error", `Unable to delete election: ${error.message}`);
+    const res = await fetch(`/api/elections/${electionId}`, { method: "DELETE" });
+    if (!res.ok) {
+      const d = await res.json();
+      showMessage("error", `Unable to delete election: ${d.error}`);
       setIsDeletingElection(false);
       return;
     }

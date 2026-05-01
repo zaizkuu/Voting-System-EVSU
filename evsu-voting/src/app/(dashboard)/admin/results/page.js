@@ -2,22 +2,19 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { createClient } from "@/lib/supabase/client";
+
 
 export default function AdminResultsListPage() {
   const [elections, setElections] = useState([]);
 
   useEffect(() => {
     const loadData = async () => {
-      const supabase = createClient();
-      const { data } = await supabase
-        .from("elections")
-        .select("id, title, type, status")
-        .order("created_at", { ascending: false });
-
-      setElections(data || []);
+      try {
+        const res = await fetch("/api/elections");
+        const data = await res.json();
+        setElections(data.elections || []);
+      } catch {}
     };
-
     loadData();
   }, []);
 

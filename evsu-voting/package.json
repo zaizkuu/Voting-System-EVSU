@@ -9,9 +9,10 @@
     "lint": "eslint"
   },
   "dependencies": {
-    "@supabase/ssr": "^0.10.0",
-    "@supabase/supabase-js": "^2.101.0",
+    "@neondatabase/serverless": "^0.10.4",
+    "bcryptjs": "^2.4.3",
     "chart.js": "^4.5.1",
+    "jose": "^5.9.6",
     "jspdf": "^4.2.1",
     "jspdf-autotable": "^5.0.7",
     "lucide-react": "^1.7.0",
