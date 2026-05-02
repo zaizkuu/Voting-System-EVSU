@@ -49,14 +49,15 @@ export default function StudentDashboardPage() {
       let studentDepartment = "";
 
       if (studentId) {
-        const studentsRes = await fetch("/api/students");
-        const studentsData = await studentsRes.json();
-        const studentRecord = (studentsData.students || []).find((s) => s.student_id === studentId);
+        // Fetch the student's own profile (student-accessible endpoint)
+        const myProfileRes = await fetch("/api/students/me");
+        const myProfileData = await myProfileRes.json();
+        const studentRecord = myProfileData.student;
+
         if (studentRecord) {
           studentRecordId = studentRecord.id;
           studentDepartment = studentRecord.department || "";
-          const memberOrgs = (orgsData.memberships || []).filter((m) => m.student_id === studentRecord.id);
-          organizationIds = memberOrgs.map((m) => m.organization_id);
+          organizationIds = (myProfileData.organizationIds || []);
           selectedOrganizationId = organizationIds[0] || "";
         }
       }

@@ -39,13 +39,10 @@ export default function VotePage({ params }) {
         if (electionData.election.organization_id) {
           let isEligible = false;
           if (meData.user.studentId) {
-            const studentsRes = await fetch("/api/students");
-            const studentsData = await studentsRes.json();
-            const studentRecord = (studentsData.students || []).find((s) => s.student_id === meData.user.studentId);
-            if (studentRecord) {
-              isEligible = (orgsData.memberships || []).some(
-                (m) => m.student_id === studentRecord.id && m.organization_id === electionData.election.organization_id
-              );
+            const myProfileRes = await fetch("/api/students/me");
+            const myProfileData = await myProfileRes.json();
+            if (myProfileData.student) {
+              isEligible = (myProfileData.organizationIds || []).includes(electionData.election.organization_id);
             }
           }
           if (!isEligible) { setStatus({ loading: false, error: "This election is restricted to a specific organization.", message: "" }); return; }
