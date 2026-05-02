@@ -26,14 +26,10 @@ export async function POST(request) {
     }
 
     const buffer = Buffer.from(await file.arrayBuffer());
-    const ext = file.name.split(".").pop() || "jpg";
-    const fileName = `${Date.now()}-${Math.random().toString(36).substring(7)}.${ext}`;
-    const uploadDir = path.join(process.cwd(), "public", "uploads", "candidates");
-
-    await mkdir(uploadDir, { recursive: true });
-    await writeFile(path.join(uploadDir, fileName), buffer);
-
-    const publicUrl = `/uploads/candidates/${fileName}`;
+    const base64String = buffer.toString("base64");
+    const mimeType = file.type;
+    const publicUrl = `data:${mimeType};base64,${base64String}`;
+    
     return NextResponse.json({ url: publicUrl });
   } catch (error) {
     console.error("Upload error:", error);
