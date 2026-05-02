@@ -42,3 +42,33 @@ export async function DELETE(request, { params }) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
+
+export async function PATCH(request, { params }) {
+  try {
+    const session = await getSession();
+    if (!session || session.role !== "admin") return NextResponse.json({ error: "Admin required" }, { status: 403 });
+
+    const { id } = await params;
+    const body = await request.json();
+    const { candidateId, full_name, party, motto, platform, department, year_level, photo_url } = body;
+
+    if (!candidateId) return NextResponse.json({ error: "Candidate ID required." }, { status: 400 });
+
+    await sql`
+      UPDATE candidates SET
+        full_name = ${full_name},
+        party = ${party || 'Independent'},
+        motto = ${motto || null},
+        platform = ${platform || null},
+        department = ${department || null},
+        year_level = ${year_level || null},
+        photo_url = COALESCE(${photo_url || null}, photo_url)
+      WHERE id = ${candidateId} AND election_id = ${id}
+    `;
+
+    return NextResponse.json({ message: "Candidate updated." });
+  } catch (error) {
+    console.error("Update candidate error:", error);
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+}

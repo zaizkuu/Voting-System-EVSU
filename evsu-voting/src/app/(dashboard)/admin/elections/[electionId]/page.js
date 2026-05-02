@@ -6,7 +6,7 @@ import DataTable from "@/components/DataTable";
 import Modal from "@/components/Modal";
 import { 
   Users, User, Trophy, AlertCircle, Plus, Upload, 
-  Trash2, X, CheckCircle2, Image as ImageIcon, Download 
+  Trash2, X, CheckCircle2, Image as ImageIcon, Download, Edit3 
 } from "lucide-react";
 import { generateAttendanceReport } from "@/lib/pdf/generateReport";
 
@@ -58,6 +58,12 @@ export default function ManageElectionPage({ params }) {
   // Image upload state
   const [photoFile, setPhotoFile] = useState(null);
   const [photoPreview, setPhotoPreview] = useState(null);
+
+  // Edit candidate state
+  const [editModalOpen, setEditModalOpen] = useState(false);
+  const [editForm, setEditForm] = useState(null);
+  const [editPhotoFile, setEditPhotoFile] = useState(null);
+  const [editPhotoPreview, setEditPhotoPreview] = useState(null);
 
   const loadData = async () => {
     setIsLoading(true);
@@ -218,6 +224,77 @@ export default function ManageElectionPage({ params }) {
     });
     removePhoto();
     showMessage("success", "Candidate added successfully!");
+    await loadData();
+  };
+
+  const openEditModal = (cand) => {
+    setEditForm({
+      id: cand.id,
+      position_id: cand.position_id,
+      full_name: cand.full_name || "",
+      party: cand.party || "",
+      motto: cand.motto || "",
+      platform: cand.platform || "",
+      department: cand.department || "",
+      year_level: cand.year_level || "",
+    });
+    setEditPhotoPreview(cand.photo_url || null);
+    setEditPhotoFile(null);
+    setEditModalOpen(true);
+  };
+
+  const handleEditPhotoSelect = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) { showMessage("error", "Please upload an image file."); return; }
+    if (file.size > 2 * 1024 * 1024) { showMessage("error", "Image must be less than 2MB."); return; }
+    setEditPhotoFile(file);
+    setEditPhotoPreview(URL.createObjectURL(file));
+  };
+
+  const saveEditCandidate = async (event) => {
+    event.preventDefault();
+    if (!editForm) return;
+    setIsSubmitting(true);
+    let uploadedPhotoUrl = null;
+
+    if (editPhotoFile) {
+      const formData = new FormData();
+      formData.append("file", editPhotoFile);
+      const uploadRes = await fetch("/api/upload", { method: "POST", body: formData });
+      const uploadData = await uploadRes.json();
+      if (!uploadRes.ok) {
+        showMessage("error", `Photo upload failed: ${uploadData.error}`);
+        setIsSubmitting(false);
+        return;
+      }
+      uploadedPhotoUrl = uploadData.url;
+    }
+
+    const res = await fetch(`/api/elections/${electionId}/candidates`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        candidateId: editForm.id,
+        full_name: editForm.full_name,
+        party: editForm.party || "Independent",
+        motto: editForm.motto || null,
+        platform: editForm.platform || null,
+        department: editForm.department || null,
+        year_level: editForm.year_level || null,
+        photo_url: uploadedPhotoUrl,
+      }),
+    });
+
+    setIsSubmitting(false);
+    const data = await res.json();
+    if (!res.ok) { showMessage("error", data.error); return; }
+
+    setEditModalOpen(false);
+    setEditForm(null);
+    setEditPhotoFile(null);
+    setEditPhotoPreview(null);
+    showMessage("success", "Candidate updated successfully!");
     await loadData();
   };
 
@@ -500,6 +577,17 @@ export default function ManageElectionPage({ params }) {
                 </div>
               </div>
 
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                <div className="form-group">
+                  <label className="form-label" htmlFor="cand-dept">Department (Optional)</label>
+                  <input id="cand-dept" className="form-input" placeholder="e.g. BSIT" value={candidateForm.department} onChange={(e) => setCandidateForm({ ...candidateForm, department: e.target.value })} />
+                </div>
+                <div className="form-group">
+                  <label className="form-label" htmlFor="cand-year">Year Level (Optional)</label>
+                  <input id="cand-year" className="form-input" placeholder="e.g. 3" value={candidateForm.year_level} onChange={(e) => setCandidateForm({ ...candidateForm, year_level: e.target.value })} />
+                </div>
+              </div>
+
               <div className="form-group">
                 <label className="form-label" htmlFor="cand-platform">Platform / Stances (Optional)</label>
                 <textarea id="cand-platform" className="form-input" rows={3} placeholder="Key initiatives and promises..." value={candidateForm.platform} onChange={(e) => setCandidateForm({ ...candidateForm, platform: e.target.value })} />
@@ -581,9 +669,14 @@ export default function ManageElectionPage({ params }) {
                         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 16 }}>
                           {pos.enrolled_candidates.map(cand => (
                             <div key={cand.id} style={{ border: "1px solid var(--border-default)", borderRadius: 12, padding: 16, position: "relative" }}>
-                              <button onClick={() => deleteCandidate(cand.id)} style={{ position: "absolute", top: 12, right: 12, background: "transparent", border: "none", color: "var(--gray-400)", cursor: "pointer", padding: 4 }} title="Remove Candidate">
-                                <X size={16} />
-                              </button>
+                              <div style={{ position: "absolute", top: 12, right: 12, display: "flex", gap: 4 }}>
+                                <button onClick={() => openEditModal(cand)} style={{ background: "transparent", border: "none", color: "var(--gray-400)", cursor: "pointer", padding: 4 }} title="Edit Candidate">
+                                  <Edit3 size={16} />
+                                </button>
+                                <button onClick={() => deleteCandidate(cand.id)} style={{ background: "transparent", border: "none", color: "var(--gray-400)", cursor: "pointer", padding: 4 }} title="Remove Candidate">
+                                  <X size={16} />
+                                </button>
+                              </div>
                               
                               <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
                                 {cand.photo_url ? (
@@ -645,6 +738,68 @@ export default function ManageElectionPage({ params }) {
           <p style={{ color: "var(--gray-500)", margin: 0 }}>No eligible voters found for this election yet.</p>
         )}
       </section>
+
+      <Modal open={editModalOpen} onClose={() => { setEditModalOpen(false); setEditForm(null); }} title="Edit Candidate">
+        {editForm && (
+          <form className="form-grid" onSubmit={saveEditCandidate}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+              <div className="form-group">
+                <label className="form-label" htmlFor="edit-name">Full Name</label>
+                <input id="edit-name" className="form-input" value={editForm.full_name} onChange={(e) => setEditForm({ ...editForm, full_name: e.target.value })} required />
+              </div>
+              <div className="form-group">
+                <label className="form-label" htmlFor="edit-party">Party</label>
+                <input id="edit-party" className="form-input" value={editForm.party} onChange={(e) => setEditForm({ ...editForm, party: e.target.value })} />
+              </div>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+              <div className="form-group">
+                <label className="form-label" htmlFor="edit-dept">Department</label>
+                <input id="edit-dept" className="form-input" placeholder="e.g. BSIT" value={editForm.department} onChange={(e) => setEditForm({ ...editForm, department: e.target.value })} />
+              </div>
+              <div className="form-group">
+                <label className="form-label" htmlFor="edit-year">Year Level</label>
+                <input id="edit-year" className="form-input" placeholder="e.g. 3" value={editForm.year_level} onChange={(e) => setEditForm({ ...editForm, year_level: e.target.value })} />
+              </div>
+            </div>
+
+            <div className="form-group">
+              <label className="form-label" htmlFor="edit-motto">Motto</label>
+              <input id="edit-motto" className="form-input" value={editForm.motto} onChange={(e) => setEditForm({ ...editForm, motto: e.target.value })} />
+            </div>
+
+            <div className="form-group">
+              <label className="form-label" htmlFor="edit-platform">Platform</label>
+              <textarea id="edit-platform" className="form-input" rows={3} value={editForm.platform} onChange={(e) => setEditForm({ ...editForm, platform: e.target.value })} />
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Photo</label>
+              <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+                {editPhotoPreview ? (
+                  <img src={editPhotoPreview} alt="Preview" style={{ width: 64, height: 64, borderRadius: "50%", objectFit: "cover", border: "3px solid white", boxShadow: "var(--shadow-sm)" }} />
+                ) : (
+                  <div style={{ width: 64, height: 64, borderRadius: "50%", background: "var(--gray-100)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <User size={24} style={{ color: "var(--gray-400)" }} />
+                  </div>
+                )}
+                <label htmlFor="edit-photo" style={{ color: "var(--maroon)", fontWeight: 600, cursor: "pointer", fontSize: "0.85rem" }}>
+                  {editPhotoPreview ? "Change Photo" : "Upload Photo"}
+                </label>
+                <input id="edit-photo" type="file" accept="image/png, image/jpeg, image/jpg" onChange={handleEditPhotoSelect} style={{ display: "none" }} />
+              </div>
+            </div>
+
+            <div className="button-row">
+              <button type="button" className="btn btn-ghost" onClick={() => { setEditModalOpen(false); setEditForm(null); }}>Cancel</button>
+              <button type="submit" className="btn btn-primary" disabled={isSubmitting}>
+                {isSubmitting ? "Saving..." : "Save Changes"}
+              </button>
+            </div>
+          </form>
+        )}
+      </Modal>
 
       <Modal open={deleteModalOpen} onClose={closeDeleteModal} title="Delete Election">
         <form className="form-grid" onSubmit={deleteElection}>
