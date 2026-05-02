@@ -52,8 +52,8 @@ export async function POST(request) {
       subtitle: "Your registration has been received",
       bodyHtml: `
         <p style="margin:0 0 12px;">Hello ${escapeEmailText(fullName)},</p>
-        <p style="margin:0 0 12px;">Your EVSU Voting registration has been received successfully.</p>
-        <p style="margin:0 0 12px;">Please check your email for the verification link to activate your account.</p>
+        <p style="margin:0 0 12px;">Your EVSU Voting account has been created successfully.</p>
+        <p style="margin:0 0 12px;">Please check your inbox for a separate verification email to activate your account. Once verified, you can sign in using the button below.</p>
       `,
       ctaLabel: "Go to Login",
       ctaUrl: loginLink,
