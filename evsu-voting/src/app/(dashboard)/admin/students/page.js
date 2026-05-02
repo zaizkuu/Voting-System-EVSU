@@ -204,6 +204,45 @@ export default function AdminStudentsPage() {
     closeManualModal();
   };
 
+  const handleDeleteStudent = async (studentId) => {
+    if (!confirm("Are you sure you want to delete this student? This action cannot be undone.")) return;
+    
+    setStatus("Deleting student...");
+    try {
+      const res = await fetch(`/api/students?id=${studentId}`, { method: "DELETE" });
+      const data = await res.json();
+      if (!res.ok) {
+        setStatus(`Failed to delete student: ${data.error}`);
+        return;
+      }
+      setStatus("Student deleted successfully.");
+      await loadStudentRows();
+    } catch {
+      setStatus("Unable to delete student right now.");
+    }
+  };
+
+  const tableColumns = useMemo(() => [
+    ...COLUMNS,
+    {
+      key: "actions",
+      label: "Actions",
+      render: (row) => (
+        row.id && !row.id.startsWith("preview-") ? (
+          <button 
+            type="button"
+            className="btn btn-outline btn-sm" 
+            style={{ borderColor: "var(--evsu-maroon)", color: "var(--evsu-maroon)", padding: "4px 8px" }}
+            onClick={() => handleDeleteStudent(row.id)}
+          >
+            Delete
+          </button>
+        ) : null
+      )
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  ], []);
+
   const rowsForTable = useMemo(() => {
     if (previewRows.length) {
       return previewRows.map((row, index) => ({ ...row, id: `preview-${index + 1}` }));
@@ -243,7 +282,7 @@ export default function AdminStudentsPage() {
       {status ? <p className="alert info">{status}</p> : null}
       {!previewRows.length && loadingRows ? <p className="alert info">Loading student records...</p> : null}
 
-      <DataTable columns={COLUMNS} rows={rowsForTable} />
+      <DataTable columns={tableColumns} rows={rowsForTable} />
 
       <Modal open={isManualModalOpen} title="Add Student Manually" onClose={closeManualModal}>
         <form className="form-grid" onSubmit={addManualStudentRow}>

@@ -46,7 +46,13 @@ export default function DataTable({ columns, rows }) {
             {pageRows.map((row, rowIndex) => (
               <tr key={row.id || rowIndex}>
                 {columns.map((column) => (
-                  <td key={column.key}>{row[column.key] ?? "-"}</td>
+                  <td key={column.key}>
+                    {column.render
+                      ? column.render(row)
+                      : column.format
+                        ? column.format(row[column.key])
+                        : row[column.key] ?? "-"}
+                  </td>
                 ))}
               </tr>
             ))}

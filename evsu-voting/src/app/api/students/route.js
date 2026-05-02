@@ -94,3 +94,33 @@ export async function POST(request) {
     return NextResponse.json({ error: "Unable to import student records right now." }, { status: 500 });
   }
 }
+
+export async function DELETE(request) {
+  try {
+    const access = await requireAdmin();
+    if (access.error) return access.error;
+
+    const { searchParams } = new URL(request.url);
+    const studentId = searchParams.get("id");
+
+    if (!studentId) {
+      return NextResponse.json({ error: "Student ID is required." }, { status: 400 });
+    }
+
+    const students = await sql`SELECT id, student_id FROM students WHERE id = ${studentId} LIMIT 1`;
+    if (!students.length) {
+      return NextResponse.json({ error: "Student not found." }, { status: 404 });
+    }
+
+    const student = students[0];
+
+    await sql`DELETE FROM users WHERE student_id = ${student.student_id}`;
+    await sql`DELETE FROM student_organizations WHERE student_id = ${student.id}`;
+    await sql`DELETE FROM students WHERE id = ${student.id}`;
+
+    return NextResponse.json({ message: "Student deleted successfully." });
+  } catch (error) {
+    console.error("students DELETE error:", error);
+    return NextResponse.json({ error: "Unable to delete student right now." }, { status: 500 });
+  }
+}
