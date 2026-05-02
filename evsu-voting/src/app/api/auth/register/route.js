@@ -55,22 +55,25 @@ export async function POST(request) {
 
     const profileFullName = String(students[0].full_name || fullName).trim();
     const passwordHash = await hashPassword(password);
-    const verificationToken = crypto.randomUUID();
-    const verificationExpires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
 
-    // Insert user
+    // Insert user (auto-verified)
     const newUsers = await sql`
-      INSERT INTO users (student_id, full_name, email, password_hash, role, email_verified, email_verification_token, email_verification_expires)
-      VALUES (${studentId}, ${profileFullName}, ${email}, ${passwordHash}, 'student', false, ${verificationToken}, ${verificationExpires.toISOString()})
+      INSERT INTO users (student_id, full_name, email, password_hash, role, email_verified)
+      VALUES (${studentId}, ${profileFullName}, ${email}, ${passwordHash}, 'student', true)
       RETURNING id, role, email
     `;
 
     const user = newUsers[0];
 
-    // Send verification email
+    // Mark student as registered
+    await sql`UPDATE students SET is_registered = true WHERE student_id = ${studentId}`;
+
+    // Create session so user is logged in immediately
+    await createSession(user.id, user.role, user.email);
+
+    // Send welcome confirmation email (non-blocking)
     try {
       const appOrigin = getAppOrigin(request);
-      const verifyUrl = `${appOrigin}/api/auth/verify-email?token=${verificationToken}`;
 
       const smtpUser = String(process.env.SMTP_USER || "").trim();
       const smtpPassword = String(process.env.SMTP_APP_PASSWORD || process.env.SMTP_PASS || "").replace(/\s+/g, "");
@@ -85,34 +88,37 @@ export async function POST(request) {
         });
 
         const themedHtml = renderThemedEmail({
-          preheader: "Verify your EVSU Voting account",
+          preheader: "Your EVSU Voting account has been created",
           title: "Welcome to EVSU Voting",
-          subtitle: "Verify your email address",
+          subtitle: "Your account is ready",
           bodyHtml: `
             <p style="margin:0 0 12px;">Hello ${profileFullName},</p>
-            <p style="margin:0 0 12px;">Thank you for registering for the EVSU Voting System. Please verify your email address to complete your registration.</p>
+            <p style="margin:0 0 12px;">Your account for the EVSU Voting System has been successfully created and confirmed. You can now log in and participate in elections.</p>
+            <p style="margin:0 0 12px;"><strong>Student ID:</strong> ${studentId}</p>
+            <p style="margin:0 0 12px;"><strong>Email:</strong> ${email}</p>
           `,
-          ctaLabel: "Verify Email",
-          ctaUrl: verifyUrl,
-          footerNote: "This verification link expires in 24 hours.",
+          ctaLabel: "Go to EVSU Voting",
+          ctaUrl: `${appOrigin}/student`,
+          footerNote: "If you did not create this account, please contact your administrator immediately.",
         });
 
         await transporter.sendMail({
           from: smtpFrom,
           to: email,
-          subject: "EVSU Voting - Verify Your Email",
-          text: `Verify your email: ${verifyUrl}`,
+          subject: "EVSU Voting - Account Created Successfully",
+          text: `Your EVSU Voting account has been created. You can now log in at ${appOrigin}/login`,
           html: themedHtml,
         });
       }
     } catch (emailError) {
-      console.error("Registration email error:", emailError);
+      console.error("Welcome email error:", emailError);
       // Don't fail registration if email fails
     }
 
     return NextResponse.json({
-      message: "Account created. Please verify your email and sign in.",
-      needsVerification: true,
+      message: "Account created successfully! You are now logged in.",
+      needsVerification: false,
+      role: user.role,
     });
   } catch (error) {
     console.error("Register error:", error);

@@ -2,10 +2,12 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { Eye, EyeOff } from "lucide-react";
 import styles from "../auth.module.css";
 
 export default function RegisterPage() {
+  const router = useRouter();
   const [form, setForm] = useState({
     studentId: "",
     fullName: "",
@@ -47,8 +49,9 @@ export default function RegisterPage() {
         return;
       }
 
-      setNotice(data.message || "Account created. Please verify your email and sign in.");
-      setLoading(false);
+      // Account is auto-confirmed and session is created — redirect to dashboard
+      router.push("/student");
+      router.refresh();
     } catch {
       setError("Unable to create account right now.");
       setLoading(false);
