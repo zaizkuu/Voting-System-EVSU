@@ -10,10 +10,18 @@ async function requireAdmin() {
 }
 
 function normalizeStudentRow(row) {
+  let fullName = String(row?.full_name || "").trim();
+  fullName = fullName.replace(/Ã‘/g, "Ñ").replace(/Ã±/g, "ñ");
+
+  let program = String(row?.program || "").trim();
+  if (program.includes("TC BSCEE") || program.includes("TC  BSCEE")) {
+    program = "BSCEE";
+  }
+
   return {
     student_id: String(row?.student_id || "").trim(),
-    full_name: String(row?.full_name || "").trim(),
-    program: String(row?.program || "").trim(),
+    full_name: fullName,
+    program: program,
     department: String(row?.department || "").trim(),
     year_level: String(row?.year_level || "").trim(),
     organizations: Array.isArray(row?.organizations) ? row.organizations.map((item) => String(item || "").trim()).filter(Boolean) : [],
