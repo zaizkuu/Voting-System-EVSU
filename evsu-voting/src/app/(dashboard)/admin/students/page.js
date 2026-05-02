@@ -66,6 +66,11 @@ export default function AdminStudentsPage() {
   const [isManualModalOpen, setIsManualModalOpen] = useState(false);
   const [manualForm, setManualForm] = useState(createEmptyManualForm);
   const [manualError, setManualError] = useState("");
+  
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [editForm, setEditForm] = useState(createEmptyManualForm);
+  const [editError, setEditError] = useState("");
+  const [editingStudentId, setEditingStudentId] = useState(null);
 
   const loadStudentRows = async () => {
     setLoadingRows(true);
@@ -222,6 +227,75 @@ export default function AdminStudentsPage() {
     }
   };
 
+  const openEditModal = (row) => {
+    setEditError("");
+    setEditingStudentId(row.id);
+    setEditForm({
+      student_id: row.student_id || "",
+      full_name: row.full_name || "",
+      program: row.program || "",
+      department: row.department || "",
+      year_level: row.year_level || "",
+      organizations: Array.isArray(row.organizations) ? row.organizations.join(", ") : "",
+    });
+    setIsEditModalOpen(true);
+  };
+
+  const closeEditModal = () => {
+    setIsEditModalOpen(false);
+    setEditForm(createEmptyManualForm());
+    setEditError("");
+    setEditingStudentId(null);
+  };
+
+  const updateEditField = (field, value) => {
+    setEditForm((previous) => ({ ...previous, [field]: value }));
+  };
+
+  const handleSaveEdit = async (event) => {
+    event.preventDefault();
+    setEditError("");
+    
+    if (!editForm.full_name.trim()) {
+      setEditError("Full Name is required.");
+      return;
+    }
+
+    setStatus("Updating student...");
+    try {
+      const normalizedRow = {
+        full_name: editForm.full_name.trim(),
+        program: editForm.program.trim(),
+        department: editForm.department.trim(),
+        year_level: editForm.year_level.trim(),
+        organizations: editForm.organizations
+          .split(",")
+          .map((item) => item.trim())
+          .filter(Boolean),
+      };
+
+      const res = await fetch(`/api/students?id=${editingStudentId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(normalizedRow),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        setEditError(`Failed to update student: ${data.error}`);
+        setStatus("");
+        return;
+      }
+      
+      setStatus("Student updated successfully.");
+      closeEditModal();
+      await loadStudentRows();
+    } catch {
+      setEditError("Unable to update student right now.");
+      setStatus("");
+    }
+  };
+
   const tableColumns = useMemo(() => [
     ...COLUMNS,
     {
@@ -229,14 +303,24 @@ export default function AdminStudentsPage() {
       label: "Actions",
       render: (row) => (
         row.id && !row.id.startsWith("preview-") ? (
-          <button 
-            type="button"
-            className="btn btn-outline btn-sm" 
-            style={{ borderColor: "var(--evsu-maroon)", color: "var(--evsu-maroon)", padding: "4px 8px" }}
-            onClick={() => handleDeleteStudent(row.id)}
-          >
-            Delete
-          </button>
+          <div style={{ display: "flex", gap: "8px" }}>
+            <button 
+              type="button"
+              className="btn btn-outline btn-sm" 
+              style={{ padding: "4px 8px" }}
+              onClick={() => openEditModal(row)}
+            >
+              Edit
+            </button>
+            <button 
+              type="button"
+              className="btn btn-outline btn-sm" 
+              style={{ borderColor: "var(--evsu-maroon)", color: "var(--evsu-maroon)", padding: "4px 8px" }}
+              onClick={() => handleDeleteStudent(row.id)}
+            >
+              Delete
+            </button>
+          </div>
         ) : null
       )
     }
@@ -359,6 +443,78 @@ export default function AdminStudentsPage() {
           <div className="button-row">
             <button type="submit" className="btn btn-primary">Add to Preview</button>
             <button type="button" className="btn btn-ghost" onClick={closeManualModal}>Cancel</button>
+          </div>
+        </form>
+      </Modal>
+
+      <Modal open={isEditModalOpen} title="Edit Student" onClose={closeEditModal}>
+        <form className="form-grid" onSubmit={handleSaveEdit}>
+          <div className="form-group">
+            <label className="form-label" htmlFor="edit-student-id">Student ID</label>
+            <input
+              id="edit-student-id"
+              className="form-input"
+              value={editForm.student_id}
+              disabled
+            />
+          </div>
+
+          <div className="form-group">
+            <label className="form-label" htmlFor="edit-full-name">Full Name</label>
+            <input
+              id="edit-full-name"
+              className="form-input"
+              value={editForm.full_name}
+              onChange={(event) => updateEditField("full_name", event.target.value)}
+              required
+            />
+          </div>
+
+          <div className="form-group">
+            <label className="form-label" htmlFor="edit-program">Program</label>
+            <input
+              id="edit-program"
+              className="form-input"
+              value={editForm.program}
+              onChange={(event) => updateEditField("program", event.target.value)}
+            />
+          </div>
+
+          <div className="form-group">
+            <label className="form-label" htmlFor="edit-department">Department</label>
+            <input
+              id="edit-department"
+              className="form-input"
+              value={editForm.department}
+              onChange={(event) => updateEditField("department", event.target.value)}
+            />
+          </div>
+
+          <div className="form-group">
+            <label className="form-label" htmlFor="edit-year-level">Year Level</label>
+            <input
+              id="edit-year-level"
+              className="form-input"
+              value={editForm.year_level}
+              onChange={(event) => updateEditField("year_level", event.target.value)}
+            />
+          </div>
+
+          <div className="form-group">
+            <label className="form-label" htmlFor="edit-organizations">Organizations (comma separated)</label>
+            <input
+              id="edit-organizations"
+              className="form-input"
+              value={editForm.organizations}
+              onChange={(event) => updateEditField("organizations", event.target.value)}
+            />
+          </div>
+
+          {editError ? <p className="alert error">{editError}</p> : null}
+
+          <div className="button-row">
+            <button type="submit" className="btn btn-primary">Save Changes</button>
+            <button type="button" className="btn btn-ghost" onClick={closeEditModal}>Cancel</button>
           </div>
         </form>
       </Modal>

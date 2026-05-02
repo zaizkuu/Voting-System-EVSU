@@ -34,8 +34,16 @@ export async function GET() {
     if (access.error) return access.error;
 
     const students = await sql`
-      SELECT id, student_id, full_name, program, department, year_level, is_registered
-      FROM students ORDER BY created_at DESC
+      SELECT s.id, s.student_id, s.full_name, s.program, s.department, s.year_level, s.is_registered,
+      COALESCE(
+        json_agg(o.name) FILTER (WHERE o.name IS NOT NULL),
+        '[]'
+      ) as organizations
+      FROM students s
+      LEFT JOIN student_organizations so ON s.id = so.student_id
+      LEFT JOIN organizations o ON so.organization_id = o.id
+      GROUP BY s.id
+      ORDER BY s.created_at DESC
     `;
 
     return NextResponse.json({ students: students || [] });
@@ -130,5 +138,57 @@ export async function DELETE(request) {
   } catch (error) {
     console.error("students DELETE error:", error);
     return NextResponse.json({ error: "Unable to delete student right now." }, { status: 500 });
+  }
+}
+
+export async function PUT(request) {
+  try {
+    const access = await requireAdmin();
+    if (access.error) return access.error;
+
+    const { searchParams } = new URL(request.url);
+    const studentId = searchParams.get("id");
+
+    if (!studentId) {
+      return NextResponse.json({ error: "Student ID is required." }, { status: 400 });
+    }
+
+    const payload = await request.json().catch(() => ({}));
+    const { full_name, program, department, year_level, organizations } = payload;
+
+    if (!full_name) {
+      return NextResponse.json({ error: "Full Name is required." }, { status: 400 });
+    }
+
+    await sql`
+      UPDATE students 
+      SET full_name = ${full_name}, program = ${program || null}, department = ${department || null}, year_level = ${year_level || null}
+      WHERE id = ${studentId}
+    `;
+
+    if (Array.isArray(organizations)) {
+      // Handle organizations update
+      // 1. Delete existing student organizations
+      await sql`DELETE FROM student_organizations WHERE student_id = ${studentId}`;
+      
+      // 2. Insert new organizations and link them
+      if (organizations.length > 0) {
+        for (const name of organizations) {
+          const trimmedName = String(name || "").trim();
+          if (trimmedName) {
+            await sql`INSERT INTO organizations (name) VALUES (${trimmedName}) ON CONFLICT (name) DO NOTHING`;
+            const orgs = await sql`SELECT id FROM organizations WHERE name = ${trimmedName}`;
+            if (orgs.length) {
+               await sql`INSERT INTO student_organizations (student_id, organization_id) VALUES (${studentId}, ${orgs[0].id}) ON CONFLICT DO NOTHING`;
+            }
+          }
+        }
+      }
+    }
+
+    return NextResponse.json({ message: "Student updated successfully." });
+  } catch (error) {
+    console.error("students PUT error:", error);
+    return NextResponse.json({ error: "Unable to update student right now." }, { status: 500 });
   }
 }
