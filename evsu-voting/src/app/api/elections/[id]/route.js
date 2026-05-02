@@ -42,3 +42,25 @@ export async function DELETE(request, { params }) {
     return NextResponse.json({ error: "Unable to delete election." }, { status: 500 });
   }
 }
+
+export async function PATCH(request, { params }) {
+  try {
+    const session = await getSession();
+    if (!session || session.role !== "admin") return NextResponse.json({ error: "Admin required" }, { status: 403 });
+
+    const { id } = await params;
+    const body = await request.json();
+    const { status } = body;
+
+    if (!["draft", "active", "completed"].includes(status)) {
+      return NextResponse.json({ error: "Invalid status." }, { status: 400 });
+    }
+
+    await sql`UPDATE elections SET status = ${status} WHERE id = ${id}`;
+    
+    return NextResponse.json({ message: "Election status updated." });
+  } catch (error) {
+    console.error("Update election error:", error);
+    return NextResponse.json({ error: "Unable to update election status." }, { status: 500 });
+  }
+}

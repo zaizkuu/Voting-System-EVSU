@@ -266,6 +266,22 @@ export default function ManageElectionPage({ params }) {
     router.refresh();
   };
 
+  const changeElectionStatus = async (newStatus) => {
+    if (!confirm(`Are you sure you want to set the election status to '${newStatus}'?`)) return;
+    const res = await fetch(`/api/elections/${electionId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: newStatus }),
+    });
+    if (!res.ok) {
+      const data = await res.json();
+      showMessage("error", `Failed to change status: ${data.error}`);
+    } else {
+      showMessage("success", `Election is now ${newStatus}.`);
+      await loadData();
+    }
+  };
+
   if (isLoading) return (
     <div className="page-stack" style={{ alignItems: "center", justifyContent: "center", minHeight: "50vh" }}>
       <p style={{ color: "var(--gray-500)", fontWeight: 500 }}>Loading election layout...</p>
@@ -290,13 +306,48 @@ export default function ManageElectionPage({ params }) {
       }}>
         <div>
           <span className="badge badge-info" style={{ marginBottom: 12 }}>{election.type.toUpperCase()} ELECTION</span>
-          <h1 style={{ fontSize: "1.75rem", fontWeight: 800, color: "var(--gray-900)", marginBottom: 4 }}>
+          <h1 style={{ fontSize: "1.75rem", fontWeight: 800, color: "var(--gray-900)", marginBottom: 4, display: "flex", alignItems: "center", gap: "12px" }}>
             {election.title}
+            <span className={`badge ${election.status === 'active' ? 'badge-success' : election.status === 'completed' ? 'badge-error' : 'badge-warning'}`} style={{ fontSize: "0.8rem" }}>
+              {election.status.toUpperCase()}
+            </span>
           </h1>
           <p style={{ color: "var(--gray-500)", fontSize: "0.9rem" }}>Manage the ballot configuration for this election.</p>
         </div>
 
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 }}>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 12 }}>
+          {/* Status Controls */}
+          <div style={{ display: "flex", gap: 8, background: "var(--gray-100)", padding: 4, borderRadius: 8 }}>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={() => changeElectionStatus('draft')}
+              disabled={election.status === 'draft'}
+              style={{ fontSize: "0.8rem", padding: "6px 12px", background: election.status === 'draft' ? "var(--white)" : "transparent", boxShadow: election.status === 'draft' ? "var(--shadow-sm)" : "none", color: election.status === 'draft' ? "var(--gray-900)" : "var(--gray-500)" }}
+            >
+              Draft
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={() => changeElectionStatus('active')}
+              disabled={election.status === 'active'}
+              style={{ fontSize: "0.8rem", padding: "6px 12px", background: election.status === 'active' ? "var(--white)" : "transparent", boxShadow: election.status === 'active' ? "var(--shadow-sm)" : "none", color: election.status === 'active' ? "var(--success)" : "var(--gray-500)" }}
+            >
+              Active
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={() => changeElectionStatus('completed')}
+              disabled={election.status === 'completed'}
+              style={{ fontSize: "0.8rem", padding: "6px 12px", background: election.status === 'completed' ? "var(--white)" : "transparent", boxShadow: election.status === 'completed' ? "var(--shadow-sm)" : "none", color: election.status === 'completed' ? "var(--error)" : "var(--gray-500)" }}
+            >
+              Archive
+            </button>
+          </div>
+
+          {/* Action Buttons */}
           <div style={{ display: "flex", gap: 12 }}>
             <button
               type="button"
@@ -315,12 +366,9 @@ export default function ManageElectionPage({ params }) {
               style={{ borderColor: "var(--error)", color: "var(--error)", fontWeight: 700 }}
             >
               <Trash2 size={16} />
-              Delete Election
+              Delete
             </button>
           </div>
-          <p style={{ margin: 0, fontSize: "0.75rem", color: "var(--gray-500)", textAlign: "right" }}>
-            Permanently removes this election and all related records.
-          </p>
         </div>
       </div>
 
