@@ -190,13 +190,126 @@ async function migrateProfiles() {
   }
 }
 
+async function migrateElections() {
+  const items = backup.elections || [];
+  if (!items.length) { console.log("   ⏭️  No elections to migrate."); return; }
+  
+  const adminRows = await sql`SELECT id FROM public.users WHERE role = 'admin' LIMIT 1`;
+  const adminId = adminRows.length > 0 ? adminRows[0].id : null;
+
+  let inserted = 0, skipped = 0;
+  for (const item of items) {
+    try {
+      let createdBy = item.created_by;
+      if (createdBy) {
+         const userRows = await sql`SELECT id FROM public.users WHERE id = ${createdBy}`;
+         if (userRows.length === 0) createdBy = adminId;
+      }
+      await sql`
+        INSERT INTO public.elections (id, title, description, type, status, organization_id, start_date, end_date, created_by, created_at)
+        VALUES (${item.id}, ${item.title}, ${item.description || null}, ${item.type}, ${item.status || 'draft'}, ${item.organization_id || null}, ${item.start_date || null}, ${item.end_date || null}, ${createdBy || null}, ${item.created_at || new Date().toISOString()})
+        ON CONFLICT (id) DO NOTHING
+      `;
+      inserted++;
+    } catch (err) {
+      if (err.message?.includes("duplicate")) skipped++;
+      else { console.error(`   ⚠️  Election ${item.title}: ${err.message}`); skipped++; }
+    }
+  }
+  console.log(`   ✅ Elections: ${inserted} inserted, ${skipped} skipped`);
+}
+
+async function migratePositions() {
+  const items = backup.positions || [];
+  if (!items.length) { console.log("   ⏭️  No positions to migrate."); return; }
+  let inserted = 0, skipped = 0;
+  for (const item of items) {
+    try {
+      await sql`
+        INSERT INTO public.positions (id, election_id, title, max_votes, display_order)
+        VALUES (${item.id}, ${item.election_id}, ${item.title}, ${item.max_votes || 1}, ${item.display_order || 0})
+        ON CONFLICT (id) DO NOTHING
+      `;
+      inserted++;
+    } catch (err) {
+      if (err.message?.includes("duplicate")) skipped++;
+      else { console.error(`   ⚠️  Position ${item.title}: ${err.message}`); skipped++; }
+    }
+  }
+  console.log(`   ✅ Positions: ${inserted} inserted, ${skipped} skipped`);
+}
+
+async function migrateCandidates() {
+  const items = backup.candidates || [];
+  if (!items.length) { console.log("   ⏭️  No candidates to migrate."); return; }
+  let inserted = 0, skipped = 0;
+  for (const item of items) {
+    try {
+      await sql`
+        INSERT INTO public.candidates (id, position_id, election_id, full_name, party, motto, platform, photo_url, department, year_level)
+        VALUES (${item.id}, ${item.position_id || null}, ${item.election_id}, ${item.full_name}, ${item.party || null}, ${item.motto || null}, ${item.platform || null}, ${item.photo_url || null}, ${item.department || null}, ${item.year_level || null})
+        ON CONFLICT (id) DO NOTHING
+      `;
+      inserted++;
+    } catch (err) {
+      if (err.message?.includes("duplicate")) skipped++;
+      else { console.error(`   ⚠️  Candidate ${item.full_name}: ${err.message}`); skipped++; }
+    }
+  }
+  console.log(`   ✅ Candidates: ${inserted} inserted, ${skipped} skipped`);
+}
+
+async function migratePolicyOptions() {
+  const items = backup.policy_options || [];
+  if (!items.length) { console.log("   ⏭️  No policy options to migrate."); return; }
+  let inserted = 0, skipped = 0;
+  for (const item of items) {
+    try {
+      await sql`
+        INSERT INTO public.policy_options (id, election_id, title, description, display_order)
+        VALUES (${item.id}, ${item.election_id}, ${item.title}, ${item.description || null}, ${item.display_order || 0})
+        ON CONFLICT (id) DO NOTHING
+      `;
+      inserted++;
+    } catch (err) {
+      if (err.message?.includes("duplicate")) skipped++;
+      else { console.error(`   ⚠️  Policy Option ${item.title}: ${err.message}`); skipped++; }
+    }
+  }
+  console.log(`   ✅ Policy Options: ${inserted} inserted, ${skipped} skipped`);
+}
+
+async function migrateVotes() {
+  const items = backup.votes || [];
+  if (!items.length) { console.log("   ⏭️  No votes to migrate."); return; }
+  let inserted = 0, skipped = 0;
+  for (const item of items) {
+    try {
+      await sql`
+        INSERT INTO public.votes (id, election_id, position_id, candidate_id, policy_option_id, policy_vote, voter_id, created_at)
+        VALUES (${item.id}, ${item.election_id}, ${item.position_id || null}, ${item.candidate_id || null}, ${item.policy_option_id || null}, ${item.policy_vote || null}, ${item.voter_id}, ${item.created_at || new Date().toISOString()})
+        ON CONFLICT (id) DO NOTHING
+      `;
+      inserted++;
+    } catch (err) {
+      if (err.message?.includes("duplicate") || err.message?.includes("violates")) skipped++;
+      else { console.error(`   ⚠️  Vote: ${err.message}`); skipped++; }
+    }
+  }
+  console.log(`   ✅ Votes: ${inserted} inserted, ${skipped} skipped`);
+}
+
 async function migrate() {
-  console.log("🔧 Migrating Supabase data to Neon...\n");
 
   await migrateStudents();
   await migrateOrganizations();
   await migrateStudentOrganizations();
   await migrateProfiles();
+  await migrateElections();
+  await migratePositions();
+  await migrateCandidates();
+  await migratePolicyOptions();
+  await migrateVotes();
 
   console.log("\n🎉 Migration complete!\n");
 }
