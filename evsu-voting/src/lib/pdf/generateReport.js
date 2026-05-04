@@ -342,27 +342,41 @@ export function generateRegistrationReport({ generatedAt, students }) {
   let currentY = doc.lastAutoTable.finalY + 10;
 
   const groupedByProgram = students.reduce((acc, student) => {
-    const prog = student.program || "Unspecified Program";
-    if (!acc[prog]) acc[prog] = [];
-    acc[prog].push(student);
+    const rawProgram = String(student.program || "").trim();
+    const label = rawProgram || "Unspecified Program";
+    const key = label.toUpperCase();
+    if (!acc[key]) acc[key] = { label, students: [] };
+    acc[key].students.push(student);
     return acc;
   }, {});
 
-  Object.entries(groupedByProgram).forEach(([program, progStudents]) => {
-    if (currentY > 230) {
-      doc.addPage();
-      currentY = 20;
-    }
-    
+  const programSections = Object.values(groupedByProgram).sort((a, b) => a.label.localeCompare(b.label));
+
+  programSections.forEach((section) => {
+    doc.addPage();
+    currentY = 20;
+
+    const registeredCount = section.students.filter((s) => s.is_registered).length;
+    const unregisteredCount = section.students.length - registeredCount;
+
     doc.setTextColor(...COLORS.maroon);
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(11.5);
-    doc.text(`Program: ${program} (${progStudents.length} students)`, MARGIN, currentY + 5);
+    doc.setFontSize(12);
+    doc.text(`Program: ${section.label}`, MARGIN, currentY);
+
+    doc.setTextColor(...COLORS.muted);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9.5);
+    doc.text(
+      `Total: ${section.students.length} | Registered: ${registeredCount} | Unregistered: ${unregisteredCount}`,
+      MARGIN,
+      currentY + 6
+    );
 
     autoTable(doc, {
-      startY: currentY + 10,
+      startY: currentY + 12,
       head: [["Student ID", "Full Name", "Department", "Year Level", "Registered"]],
-      body: progStudents.map((s) => [s.student_id, s.full_name, s.department || "-", s.year_level || "-", s.is_registered ? "YES" : "NO"]),
+      body: section.students.map((s) => [s.student_id, s.full_name, s.department || "-", s.year_level || "-", s.is_registered ? "YES" : "NO"]),
       theme: "grid",
       styles: { fontSize: 9.5, cellPadding: 2, lineColor: COLORS.border, lineWidth: 0.2 },
       headStyles: { fillColor: [60, 60, 60], textColor: COLORS.white },
