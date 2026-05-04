@@ -361,35 +361,75 @@ export function generateRegistrationReport({ generatedAt, students }) {
     const registeredCount = section.students.filter((s) => s.is_registered).length;
     const unregisteredCount = section.students.length - registeredCount;
 
-    doc.setTextColor(...COLORS.maroon);
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(12);
-    doc.text(`Program: ${section.label}`, MARGIN, currentY);
+    const renderProgramHeader = () => {
+      doc.setTextColor(...COLORS.maroon);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(12);
+      doc.text(`Program: ${section.label}`, MARGIN, currentY);
 
-    doc.setTextColor(...COLORS.muted);
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9.5);
-    doc.text(
-      `Total: ${section.students.length} | Registered: ${registeredCount} | Unregistered: ${unregisteredCount}`,
-      MARGIN,
-      currentY + 6
-    );
+      doc.setTextColor(...COLORS.muted);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9.5);
+      doc.text(
+        `Total: ${section.students.length} | Registered: ${registeredCount} | Unregistered: ${unregisteredCount}`,
+        MARGIN,
+        currentY + 6
+      );
 
-    autoTable(doc, {
-      startY: currentY + 12,
-      head: [["Student ID", "Full Name", "Department", "Year Level", "Registered"]],
-      body: section.students.map((s) => [s.student_id, s.full_name, s.department || "-", s.year_level || "-", s.is_registered ? "YES" : "NO"]),
-      theme: "grid",
-      styles: { fontSize: 9.5, cellPadding: 2, lineColor: COLORS.border, lineWidth: 0.2 },
-      headStyles: { fillColor: [60, 60, 60], textColor: COLORS.white },
-      didParseCell: (data) => {
-        if (data.section === "body" && data.column.index === 4) {
-          data.cell.styles.textColor = data.cell.raw === "YES" ? [0, 128, 0] : [200, 0, 0];
-          data.cell.styles.fontStyle = "bold";
-        }
+      return currentY + 12;
+    };
+
+    currentY = renderProgramHeader();
+
+    const yearGroups = section.students.reduce((acc, student) => {
+      const rawYear = String(student.year_level || "").trim();
+      const label = rawYear || "Unspecified Year Level";
+      const key = label.toUpperCase();
+      if (!acc[key]) acc[key] = { label, students: [] };
+      acc[key].students.push(student);
+      return acc;
+    }, {});
+
+    const yearSections = Object.values(yearGroups).sort((a, b) => {
+      const aNum = Number.parseInt(a.label, 10);
+      const bNum = Number.parseInt(b.label, 10);
+      if (!Number.isNaN(aNum) || !Number.isNaN(bNum)) {
+        if (Number.isNaN(aNum)) return 1;
+        if (Number.isNaN(bNum)) return -1;
+        if (aNum !== bNum) return aNum - bNum;
       }
+      return a.label.localeCompare(b.label);
     });
-    currentY = doc.lastAutoTable.finalY + 10;
+
+    yearSections.forEach((yearSection) => {
+      if (currentY > 230) {
+        doc.addPage();
+        currentY = 20;
+        currentY = renderProgramHeader();
+      }
+
+      doc.setTextColor(...COLORS.text);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10.5);
+      doc.text(`Year Level: ${yearSection.label} (${yearSection.students.length})`, MARGIN, currentY);
+
+      autoTable(doc, {
+        startY: currentY + 4,
+        head: [["Student ID", "Full Name", "Department", "Registered"]],
+        body: yearSection.students.map((s) => [s.student_id, s.full_name, s.department || "-", s.is_registered ? "YES" : "NO"]),
+        theme: "grid",
+        styles: { fontSize: 9.5, cellPadding: 2, lineColor: COLORS.border, lineWidth: 0.2 },
+        headStyles: { fillColor: [60, 60, 60], textColor: COLORS.white },
+        didParseCell: (data) => {
+          if (data.section === "body" && data.column.index === 3) {
+            data.cell.styles.textColor = data.cell.raw === "YES" ? [0, 128, 0] : [200, 0, 0];
+            data.cell.styles.fontStyle = "bold";
+          }
+        }
+      });
+
+      currentY = doc.lastAutoTable.finalY + 8;
+    });
   });
 
   drawFooter({ doc, reportMode: "Registration Report", generatedAt });
