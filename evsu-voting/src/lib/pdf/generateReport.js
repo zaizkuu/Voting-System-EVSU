@@ -352,9 +352,11 @@ export function generateRegistrationReport({ generatedAt, students }) {
 
   const programSections = Object.values(groupedByProgram).sort((a, b) => a.label.localeCompare(b.label));
 
-  programSections.forEach((section) => {
-    doc.addPage();
-    currentY = 20;
+  programSections.forEach((section, index) => {
+    if (index > 0) {
+      doc.addPage();
+      currentY = 20;
+    }
 
     const registeredCount = section.students.filter((s) => s.is_registered).length;
     const unregisteredCount = section.students.length - registeredCount;
